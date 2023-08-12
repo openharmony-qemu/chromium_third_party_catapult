@@ -12,11 +12,15 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import random
+
 from dashboard.services import request
 
 _API_PATH = '_ah/api/swarming/v1'
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class Swarming(object):
 
   def __init__(self, server):
@@ -35,6 +39,8 @@ class Swarming(object):
     return Tasks(self._server)
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class Bot(object):
 
   def __init__(self, server, bot_id):
@@ -57,6 +63,8 @@ class Bot(object):
     return request.RequestJson(url, **kwargs)
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class Bots(object):
 
   def __init__(self, server):
@@ -83,6 +91,8 @@ class Bots(object):
         quarantined=quarantined)
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class Task(object):
 
   def __init__(self, server, task_id):
@@ -118,6 +128,8 @@ class Task(object):
     return request.RequestJson(url, **kwargs)
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class Tasks(object):
 
   def __init__(self, server):
@@ -132,3 +144,28 @@ class Tasks(object):
     """
     url = '%s/%s/tasks/new' % (self._server, _API_PATH)
     return request.RequestJson(url, method='POST', body=body)
+
+
+def _IsAlive(response):
+  if response['is_dead'] or response['deleted']:
+    return False
+  if not response['quarantined']:
+    return True
+  return 'No available devices' not in str(response)
+
+
+def GetAliveBotsByDimensions(dimensions, swarming_server):
+  # Queries Swarming for the set of bots we can use for this test.
+  query_dimensions = {p['key']: p['value'] for p in dimensions}
+  results = Swarming(swarming_server).Bots().List(
+      dimensions=query_dimensions, is_dead='FALSE', quarantined='FALSE')
+  if 'items' in results:
+    bots = [i['bot_id'] for i in results['items']]
+    random.shuffle(bots)
+    return bots
+  return []
+
+
+def IsBotAlive(bot_id, swarming_server):
+  result = Swarming(swarming_server).Bot(bot_id).Get()
+  return _IsAlive(result)

@@ -9,11 +9,10 @@ After modifying this file execute it ('./main.star') to regenerate the configs.
 This is also enforced by PRESUBMIT.py script.
 """
 
-lucicfg.check_version("1.24.2", "Please update depot_tools")
+lucicfg.check_version("1.31.1", "Please update depot_tools")
 
-# Enable LUCI Realms support.
-lucicfg.enable_experiment("crbug.com/1085650")
-luci.builder.defaults.experiments.set({"luci.use_realms": 100})
+# Use LUCI Scheduler BBv2 names and add Scheduler realms configs.
+lucicfg.enable_experiment("crbug.com/1182002")
 
 lucicfg.config(
     config_dir = "generated",
@@ -103,7 +102,7 @@ luci.cq_group(
 )
 
 # Matches any file under the 'dashboard' root directory.
-DASHBOARD_RE = ".+[+]/dashboard/.+"
+DASHBOARD_RE = "dashboard/.+"
 
 def try_builder(
         name,
@@ -146,11 +145,15 @@ def try_builder(
     executable = luci.recipe(
         name = "catapult",
         cipd_package = "infra/recipe_bundles/chromium.googlesource.com/chromium/tools/build",
+        use_bbagent = True,
+        use_python3 = True,
     )
     if is_presubmit:
         executable = luci.recipe(
             name = "run_presubmit",
             cipd_package = "infra/recipe_bundles/chromium.googlesource.com/chromium/tools/build",
+            use_bbagent = True,
+            use_python3 = True,
         )
         props["repo_name"] = "catapult"
     if is_dashboard:
@@ -172,7 +175,10 @@ def try_builder(
     # Presubmit sees all changes
     if not is_presubmit:
         if not is_dashboard:
-            verifier_kwargs["location_regexp_exclude"] = [DASHBOARD_RE]
+            verifier_kwargs["location_filters"] = [
+                cq.location_filter(path_regexp = ".*"),
+                cq.location_filter(path_regexp = DASHBOARD_RE, exclude = True),
+            ]
     if experiment != None:
         verifier_kwargs["experiment_percentage"] = experiment
 
@@ -188,14 +194,12 @@ try_builder("Catapult Linux Tryserver Py2", "Ubuntu")
 
 try_builder("Catapult Windows Tryserver Py2", "Windows-10")
 try_builder("Catapult Windows Tryserver", "Windows-10", properties = {"use_python3": True})
-try_builder("Catapult Win 7 Tryserver", "Windows-7", experiment = 100, properties = {"use_python3": True})
 
 try_builder("Catapult Mac Tryserver Py2", "Mac", dimensions = {"cpu": "x86-64"})
 try_builder("Catapult Mac Tryserver", "Mac", dimensions = {"cpu": "x86-64"}, properties = {"use_python3": True})
 
-# TODO(crbug/1271700): Re-enable once dependency issues are resolved
-# try_builder("Catapult Mac M1 Tryserver Py2", "Mac", dimensions = {"cpu": "arm"}, experiment = 100)
-# try_builder("Catapult Mac M1 Tryserver", "Mac", dimensions = {"cpu": "arm"}, properties = {"use_python3": True}, experiment = 100)
+try_builder("Catapult Mac M1 Tryserver Py2", "Mac", dimensions = {"cpu": "arm"}, experiment = 100)
+try_builder("Catapult Mac M1 Tryserver", "Mac", dimensions = {"cpu": "arm"}, properties = {"use_python3": True})
 
 try_builder("Catapult Android Tryserver", "Android", dimensions = {"device_type": "bullhead"}, properties = {"platform": "android", "use_python3": True})
 try_builder("Catapult Android Tryserver Py2", "Android", dimensions = {"device_type": "bullhead"}, properties = {"platform": "android"})
@@ -203,3 +207,4 @@ try_builder("Catapult Android Tryserver Py2", "Android", dimensions = {"device_t
 try_builder("Catapult Presubmit", "Ubuntu", is_presubmit = True)
 
 try_builder("Dashboard Linux Tryserver", "Ubuntu", is_dashboard = True)
+try_builder("Dashboard Linux Tryserver Py3", "Ubuntu", is_dashboard = True, properties = {"use_python3": True})

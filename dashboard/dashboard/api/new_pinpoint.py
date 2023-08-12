@@ -24,6 +24,7 @@ class NewPinpointHandler(api_request_handler.ApiRequestHandler):
       raise api_request_handler.ForbiddenError()
 
   def Post(self, *args, **kwargs):
+    utils.LogObsoleteHandlerUsage(self, 'POST')
     del args, kwargs  # Unused.
     params = dict((a, self.request.get(a)) for a in self.request.arguments())
     desc = descriptor.Descriptor(params['suite'], params['measurement'],

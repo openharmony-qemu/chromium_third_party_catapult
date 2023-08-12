@@ -21,6 +21,7 @@ class ExistingBugHandler(api_request_handler.ApiRequestHandler):
       raise api_request_handler.ForbiddenError()
 
   def Post(self, *args, **kwargs):
+    utils.LogObsoleteHandlerUsage(self, 'POST')
     del args, kwargs  # Unused.
     keys = self.request.get_all('key')
     bug_id = int(self.request.get('bug'))

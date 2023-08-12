@@ -20,6 +20,7 @@ from tracing.value import histogram_set
 from tracing.value import histogram as histogram_module
 from tracing.value.diagnostics import generic_set
 from tracing.value.diagnostics import reserved_infos
+import six
 
 _BASE_ARGUMENTS_HISTOGRAMS = {'benchmark': 'speedometer'}
 _BASE_ARGUMENTS_GRAPH_JSON = {
@@ -39,6 +40,8 @@ class ReadValueQuestTest(unittest.TestCase):
     self.stream_handler = logging.StreamHandler(sys.stdout)
     self.logger.addHandler(self.stream_handler)
     self.addCleanup(self.logger.removeHandler, self.stream_handler)
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(ReadValueQuestTest, self).setUp()
 
   def testMinimumArguments(self):
@@ -146,6 +149,8 @@ class _ReadValueExecutionTest(unittest.TestCase):
         testing_common.FakeCASClient)
     cas_client.start()
     self.addCleanup(cas_client.stop)
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(_ReadValueExecutionTest, self).setUp()
 
   def SetOutputFileContents(self, contents):
@@ -157,7 +162,7 @@ class _ReadValueExecutionTest(unittest.TestCase):
   def SetOutputCASContents(self, path, content):
 
     def GetDigest(data):
-      data_str = str(data)
+      data_str = six.ensure_binary(str(data))
       return (
           hashlib.sha256(data_str).hexdigest(),
           len(data_str),
@@ -209,7 +214,7 @@ class _ReadValueExecutionTest(unittest.TestCase):
   def assertReadValueError(self, execution, exception):
     self.assertTrue(execution.completed)
     self.assertTrue(execution.failed)
-    self.assertIsInstance(execution.exception['traceback'], basestring)
+    self.assertIsInstance(execution.exception['traceback'], six.string_types)
     self.assertIn(exception, execution.exception['traceback'])
 
   def assertReadValueSuccess(self, execution):

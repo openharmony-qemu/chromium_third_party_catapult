@@ -19,12 +19,14 @@ from google.appengine.ext import ndb
 
 from dashboard.common import datastore_hooks
 from dashboard.common import request_handler
+from dashboard.common import utils
 
 
 class PutEntitiesTaskHandler(request_handler.RequestHandler):
 
   def post(self):
     """Saves the given entities."""
+    utils.LogObsoleteHandlerUsage(self, 'POST')
     datastore_hooks.SetPrivilegedRequest()
     urlsafe_keys = self.request.get('keys').split(',')
     keys = [ndb.Key(urlsafe=k) for k in urlsafe_keys]

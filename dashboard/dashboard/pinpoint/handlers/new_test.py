@@ -8,6 +8,7 @@ from __future__ import absolute_import
 
 import json
 import mock
+import six
 
 from dashboard.api import api_auth
 from dashboard.common import datastore_hooks
@@ -21,6 +22,11 @@ from dashboard.pinpoint.models import job as job_module
 from dashboard.pinpoint.models import quest as quest_module
 from dashboard.pinpoint.models.change import change_test
 
+if six.PY2:
+  _JOB_URL_HOST = 'https://testbed.example.com'
+else:
+  _JOB_URL_HOST = 'https://localhost:80'
+
 # All arguments must have string values.
 _BASE_REQUEST = {
     'target': 'telemetry_perf_tests',
@@ -31,6 +37,8 @@ _BASE_REQUEST = {
     'start_git_hash': '1',
     'end_git_hash': '3',
     'story': 'speedometer',
+    'comparison_mode': 'performance',
+    'initial_attempt_count': '10'
 }
 
 # TODO: Make this agnostic to the parameters the Quests take.
@@ -47,6 +55,8 @@ _CONFIGURATION_ARGUMENTS = {
 class _NewTest(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(_NewTest, self).setUp()
 
     self.SetCurrentUserOAuth(testing_common.INTERNAL_USER)
@@ -63,6 +73,8 @@ class _NewTest(test.TestCase):
         })
 
 
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=["a"]))
 class NewAuthTest(_NewTest):
 
   @mock.patch.object(api_auth, 'Authorize',
@@ -89,6 +101,8 @@ class NewAuthTest(_NewTest):
 @mock.patch.object(utils, 'ServiceAccountHttp', mock.MagicMock())
 @mock.patch.object(api_auth, 'Authorize', mock.MagicMock())
 @mock.patch.object(utils, 'IsTryjobUser', mock.MagicMock())
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=["a"]))
 class NewTest(_NewTest):
 
   def testPost(self):
@@ -96,7 +110,7 @@ class NewTest(_NewTest):
     result = json.loads(response.body)
     self.assertIn('jobId', result)
     self.assertEqual(result['jobUrl'],
-                     'https://testbed.example.com/job/%s' % result['jobId'])
+                     _JOB_URL_HOST + '/job/%s' % result['jobId'])
 
   def testNoConfiguration(self):
     request = dict(_BASE_REQUEST)
@@ -105,8 +119,10 @@ class NewTest(_NewTest):
     response = self.Post('/api/new', request, status=200)
     result = json.loads(response.body)
     self.assertIn('jobId', result)
+    job = job_module.JobFromId(json.loads(response.body)['jobId'])
+    self.assertIsNotNone(job.batch_id)
     self.assertEqual(result['jobUrl'],
-                     'https://testbed.example.com/job/%s' % result['jobId'])
+                     _JOB_URL_HOST + '/job/%s' % result['jobId'])
 
   def testBadConfiguration(self):
     request = dict(_BASE_REQUEST)
@@ -161,6 +177,14 @@ class NewTest(_NewTest):
     self.assertEqual(job.comparison_mode, 'try')
     self.assertEqual(job.state._changes[0].id_string, 'chromium@3')
     self.assertEqual(job.state._changes[1].id_string, 'chromium@3')
+
+  def testDifferentAttemptCount(self):
+    request = dict(_BASE_REQUEST)
+    request['comparison_mode'] = 'try'
+    request['initial_attempt_count'] = '2'
+    response = self.Post('/api/new', request, status=200)
+    job = job_module.JobFromId(json.loads(response.body)['jobId'])
+    self.assertEqual(job.state._initial_attempt_count, 2)
 
   def testComparisonModeTry_ApplyPatch(self):
     request = dict(_BASE_REQUEST)
@@ -290,13 +314,6 @@ class NewTest(_NewTest):
         job.state._changes[1].id_string,
         'chromium@f00d + %s' % ('https://lalala/repo~branch~id/abc123',))
 
-  def testComparisonModeOmitted(self):
-    request = dict(_BASE_REQUEST)
-    self.assertFalse('comparison_mode' in request)
-    response = self.Post('/api/new', request, status=200)
-    job = job_module.JobFromId(json.loads(response.body)['jobId'])
-    self.assertEqual(job.comparison_mode, 'try')
-
   def testComparisonModeUnknown(self):
     request = dict(_BASE_REQUEST)
     request['comparison_mode'] = 'invalid comparison mode'
@@ -354,7 +371,7 @@ class NewTest(_NewTest):
     result = json.loads(response.body)
     self.assertIn('jobId', result)
     self.assertEqual(result['jobUrl'],
-                     'https://testbed.example.com/job/%s' % result['jobId'])
+                     _JOB_URL_HOST + '/job/%s' % result['jobId'])
 
   def testWithPatch(self):
     request = dict(_BASE_REQUEST)

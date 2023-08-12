@@ -28,6 +28,8 @@ _SERVICE_ACCOUNT_EMAIL = 'service-account@chromium.org'
 class AlertGroupWorkflowTest(testing_common.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(AlertGroupWorkflowTest, self).setUp()
     self.maxDiff = None
     self._issue_tracker = testing_common.FakeIssueTrackerService()
@@ -250,6 +252,59 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
         sheriff_config=self._sheriff_config,
         issue_tracker=self._issue_tracker,
         service_account=self._service_account,
+    )
+    self._UpdateTwice(
+        workflow=w,
+        update=alert_group_workflow.AlertGroupWorkflow.GroupUpdate(
+            now=datetime.datetime.utcnow(),
+            anomalies=ndb.get_multi(anomalies + added),
+            issue=self._issue_tracker.issue,
+        ))
+
+    self.assertEqual(len(group.get().anomalies), 4)
+    self.assertEqual('closed', self._issue_tracker.issue.get('state'))
+    for a in added:
+      self.assertIn(a, group.get().anomalies)
+      self.assertEqual(group.get().bug.bug_id,
+                       self._issue_tracker.add_comment_args[0])
+      self.assertIn('Added 2 regressions to the group',
+                    self._issue_tracker.add_comment_args[1])
+      self.assertIn('4 regressions in test_suite',
+                    self._issue_tracker.add_comment_kwargs['summary'])
+      self.assertIn('sheriff',
+                    self._issue_tracker.add_comment_kwargs['summary'])
+      self.assertFalse(self._issue_tracker.add_comment_kwargs['send_email'])
+
+  def testAddAnomalies_GroupTriaged_IssueClosed_LegacyAccount(self):
+    anomalies = [self._AddAnomaly(), self._AddAnomaly()]
+    added = [self._AddAnomaly(), self._AddAnomaly()]
+    group = self._AddAlertGroup(
+        anomalies[0],
+        issue=self._issue_tracker.issue,
+        anomalies=anomalies,
+        status=alert_group.AlertGroup.Status.closed,
+    )
+    self._issue_tracker.issue.update({
+        'state':
+            'closed',
+        'comments': [{
+            'id': 1,
+            'author': utils.LEGACY_SERVICE_ACCOUNT,
+            'updates': {
+                'status': 'WontFix'
+            },
+        }],
+    })
+    self._sheriff_config.patterns = {
+        '*': [
+            subscription.Subscription(name='sheriff', auto_triage_enable=True)
+        ],
+    }
+    w = alert_group_workflow.AlertGroupWorkflow(
+        group.get(),
+        sheriff_config=self._sheriff_config,
+        issue_tracker=self._issue_tracker,
+        service_account=lambda: utils.LEGACY_SERVICE_ACCOUNT,
     )
     self._UpdateTwice(
         workflow=w,
@@ -930,7 +985,7 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
             issue=self._issue_tracker.issue,
         ))
     tags = json.loads(self._pinpoint.new_job_request['tags'])
-    self.assertEqual(anomalies[1].urlsafe(), tags['alert'])
+    self.assertEqual(six.ensure_str(anomalies[1].urlsafe()), tags['alert'])
 
     # Tags must be a dict of key/value string pairs.
     for k, v in tags.items():
@@ -984,7 +1039,7 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
             issue=self._issue_tracker.issue,
         ))
     tags = json.loads(self._pinpoint.new_job_request['tags'])
-    self.assertEqual(anomalies[0].urlsafe(), tags['alert'])
+    self.assertEqual(six.ensure_str(anomalies[0].urlsafe()), tags['alert'])
 
     # Tags must be a dict of key/value string pairs.
     for k, v in tags.items():
@@ -1039,7 +1094,7 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
             issue=self._issue_tracker.issue,
         ))
     tags = json.loads(self._pinpoint.new_job_request['tags'])
-    self.assertEqual(anomalies[0].urlsafe(), tags['alert'])
+    self.assertEqual(six.ensure_str(anomalies[0].urlsafe()), tags['alert'])
 
 
   def testBisect_GroupTriaged_WithDefaultSignalQuality(self):
@@ -1090,7 +1145,7 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
             issue=self._issue_tracker.issue,
         ))
     tags = json.loads(self._pinpoint.new_job_request['tags'])
-    self.assertEqual(anomalies[2].urlsafe(), tags['alert'])
+    self.assertEqual(six.ensure_str(anomalies[2].urlsafe()), tags['alert'])
 
     # Tags must be a dict of key/value string pairs.
     for k, v in tags.items():
@@ -1361,7 +1416,7 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
             issue=self._issue_tracker.issue,
         ))
     self.assertEqual(
-        anomalies[1].urlsafe(),
+        six.ensure_str(anomalies[1].urlsafe()),
         json.loads(self._pinpoint.new_job_request['tags'])['alert'])
     self.assertEqual(['123456'], group.get().bisection_ids)
 
@@ -1411,7 +1466,7 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
             issue=self._issue_tracker.issue,
         ))
     self.assertEqual(
-        anomalies[1].urlsafe(),
+        six.ensure_str(anomalies[1].urlsafe()),
         json.loads(self._pinpoint.new_job_request['tags'])['alert'])
     self.assertEqual(['123456'], group.get().bisection_ids)
 
@@ -1463,7 +1518,7 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
             issue=self._issue_tracker.issue,
         ))
     self.assertEqual(
-        anomalies[1].urlsafe(),
+        six.ensure_str(anomalies[1].urlsafe()),
         json.loads(self._pinpoint.new_job_request['tags'])['alert'])
     self.assertEqual(['123456'], group.get().bisection_ids)
 
@@ -1512,9 +1567,9 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
             issue=self._issue_tracker.issue,
         ))
     self.assertEqual(
-        anomalies[0].urlsafe(),
+        six.ensure_str(anomalies[0].urlsafe()),
         json.loads(self._pinpoint.new_job_request['tags'])['alert'])
-    self.assertItemsEqual(['abcdef', '123456'], group.get().bisection_ids)
+    six.assertCountEqual(self, ['abcdef', '123456'], group.get().bisection_ids)
 
   def testBisect_GroupTriaged_CrrevFailed(self):
     anomalies = [self._AddAnomaly(), self._AddAnomaly()]
@@ -1761,8 +1816,8 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
         'send_email': False
     })
 
-    self.assertEqual(
-        self._issue_tracker.calls[3], {
+    six.assertCountEqual(
+        self, self._issue_tracker.calls[3], {
             'method': 'AddBugComment',
             'args': (42, None),
             'kwargs': {
@@ -1841,8 +1896,8 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
                      self._issue_tracker.calls[2]['args'][1])
     self.assertIn('Alert group updated:',
                   self._issue_tracker.calls[2]['args'][1])
-    self.assertEqual(
-        self._issue_tracker.calls[2]['kwargs'], {
+    six.assertCountEqual(
+        self, self._issue_tracker.calls[2]['kwargs'], {
             'summary':
                 '[%s]: %d regressions in %s' % ('sheriff', 3, 'test_suite'),
             'labels': [
@@ -1908,8 +1963,8 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
                      self._issue_tracker.calls[1]['args'][1])
     self.assertIn('Alert group updated:',
                   self._issue_tracker.calls[1]['args'][1])
-    self.assertEqual(
-        self._issue_tracker.calls[1]['kwargs'], {
+    six.assertCountEqual(
+        self, self._issue_tracker.calls[1]['kwargs'], {
             'summary':
                 '[%s]: %d regressions in %s' % ('sheriff', 3, 'test_suite'),
             'labels': [
@@ -1998,8 +2053,8 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
         'send_email': False
     })
 
-    self.assertEqual(
-        self._issue_tracker.calls[3], {
+    six.assertCountEqual(
+        self, self._issue_tracker.calls[3], {
             'method': 'AddBugComment',
             'args': (42, None),
             'kwargs': {
@@ -2178,6 +2233,7 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
 
     w = alert_group_workflow.AlertGroupWorkflow(
         canonical_group.get(),
+        sheriff_config=self._sheriff_config,
         issue_tracker=self._issue_tracker,
         config=alert_group_workflow.AlertGroupWorkflow.Config(
             active_window=datetime.timedelta(days=7),
@@ -2197,9 +2253,20 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
     base_anomaly = self._AddAnomaly()
 
     self._issue_tracker._bug_id_counter = 42
+
+    canonical_issue = self._issue_tracker.GetIssue(
+        self._issue_tracker.NewBug()['bug_id'])
+    canonical_group = self._AddAlertGroup(
+        base_anomaly,
+        issue=canonical_issue,
+        status=alert_group.AlertGroup.Status.triaged,
+    )
+
     duplicate_issue = self._issue_tracker.GetIssue(
-        self._issue_tracker.NewBug(status='Duplicate',
-                                   state='closed')['bug_id'])
+        self._issue_tracker.NewBug(
+            status='Duplicate',
+            state='closed',
+            mergedInto={'issueId': canonical_issue['id']})['bug_id'])
     duplicate_group = self._AddAlertGroup(
         base_anomaly,
         issue=duplicate_issue,
@@ -2210,36 +2277,9 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
         self._AddAnomaly(groups=[duplicate_group])
     ]
 
-    canonical_issue = self._issue_tracker.GetIssue(
-        self._issue_tracker.NewBug()['bug_id'])
-    canonical_group = self._AddAlertGroup(
-        base_anomaly,
-        issue=canonical_issue,
-        status=alert_group.AlertGroup.Status.triaged,
-    )
-
-    self._issue_tracker.issue_comments.update({
-        ('chromium', duplicate_issue['id']): [
-            {
-                'id': 2,
-                'updates': {
-                    'status': 'Duplicate',
-                    # According to Monorail API documentation, mergedInto
-                    # has string type.
-                    'mergedInto': str(canonical_issue['id'])
-                },
-            },
-            {
-                'id': 1,
-                'updates': {
-                    'status': 'WontFix'
-                },
-            }
-        ]
-    })
-
     w = alert_group_workflow.AlertGroupWorkflow(
         duplicate_group.get(),
+        sheriff_config=self._sheriff_config,
         issue_tracker=self._issue_tracker,
         config=alert_group_workflow.AlertGroupWorkflow.Config(
             active_window=datetime.timedelta(days=7),
@@ -2298,6 +2338,7 @@ class AlertGroupWorkflowTest(testing_common.TestCase):
 
     w = alert_group_workflow.AlertGroupWorkflow(
         duplicate_group.get(),
+        sheriff_config=self._sheriff_config,
         issue_tracker=self._issue_tracker,
         config=alert_group_workflow.AlertGroupWorkflow.Config(
             active_window=datetime.timedelta(days=7),

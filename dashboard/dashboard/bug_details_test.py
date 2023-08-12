@@ -13,9 +13,6 @@ import mock
 import webapp2
 import webtest
 
-# pylint: disable=unused-import
-from dashboard import mock_oauth2_decorator
-# pylint: enable=unused-import
 
 from dashboard import bug_details
 from dashboard.common import testing_common
@@ -52,6 +49,8 @@ GET_COMMENTS_DATA = [{
 class BugDetailsHandlerTest(testing_common.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(BugDetailsHandlerTest, self).setUp()
     app = webapp2.WSGIApplication([('/bug_details',
                                     bug_details.BugDetailsHandler)])

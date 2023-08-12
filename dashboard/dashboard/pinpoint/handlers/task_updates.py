@@ -10,7 +10,6 @@ import base64
 import binascii
 import json
 import logging
-import webapp2
 import six
 
 from dashboard.pinpoint.models import job as job_module
@@ -18,6 +17,7 @@ from dashboard.pinpoint.models import task as task_module
 from dashboard.pinpoint.models import event as event_module
 from dashboard.pinpoint.models.tasks import evaluator
 from dashboard.pinpoint.models import errors
+from dashboard.common import utils
 
 
 def HandleTaskUpdate(request_body):
@@ -44,7 +44,7 @@ def HandleTaskUpdate(request_body):
 
   try:
     decoded_data = base64.urlsafe_b64decode(data.encode('utf-8'))
-  except TypeError as e:
+  except (TypeError, binascii.Error) as e:
     six.raise_from(
         ValueError('Failed decoding `data` field in `message`: %s (%s)' %
                    (str(e), data)), e)
@@ -151,15 +151,30 @@ def HandleTaskUpdate(request_body):
     raise
 
 
-class TaskUpdates(webapp2.RequestHandler):
-  """Handle updates received from Pub/Sub on Swarming Tasks."""
+if utils.IsRunningFlask():
+  from flask import make_response, request
 
-  def post(self):
-    """Handle push messages including information about the swarming task."""
+  def TaskUpdatesHandler():
+    """Handle updates received from Pub/Sub on Swarming Tasks."""
     try:
-      HandleTaskUpdate(self.request.body)
+      HandleTaskUpdate(request.data)
     except (ValueError, binascii.Error) as error:
       logging.error('Failed: %s', error)
 
-    self.response.status = 204
-    self.response.write('')
+    return make_response('', 204)
+
+else:
+  import webapp2
+
+  class TaskUpdates(webapp2.RequestHandler):
+    """Handle updates received from Pub/Sub on Swarming Tasks."""
+
+    def post(self):
+      """Handle push messages including information about the swarming task."""
+      try:
+        HandleTaskUpdate(self.request.body)
+      except (ValueError, binascii.Error) as error:
+        logging.error('Failed: %s', error)
+
+      self.response.status = 204
+      self.response.write('')

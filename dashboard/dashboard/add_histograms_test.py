@@ -122,6 +122,8 @@ def _CreateHistogram(name='hist',
   return histograms
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class BufferedFakeFile(object):
 
   def __init__(self, data=str()):
@@ -163,6 +165,8 @@ class BufferedFakeFile(object):
 class AddHistogramsBaseTest(testing_common.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(AddHistogramsBaseTest, self).setUp()
     app = webapp2.WSGIApplication([
         ('/add_histograms', add_histograms.AddHistogramsHandler),
@@ -1600,6 +1604,8 @@ class AddHistogramsTest(AddHistogramsBaseTest):
 class AddHistogramsUploadCompleteonTokenTest(AddHistogramsBaseTest):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(AddHistogramsUploadCompleteonTokenTest, self).setUp()
 
     self._TrunOnUploadCompletionTokenExperiment()
@@ -1778,6 +1784,10 @@ class AddHistogramsUploadCompleteonTokenTest(AddHistogramsBaseTest):
     self.assertEqual(len(measurements), 1)
     self.assertEqual(measurements[0].monitored, True)
 
+  # (crbug/1298177) The setup for Flask is not ready yet. We will force the test
+  # to run in the old setup for now.
+  @mock.patch.object(utils, 'IsRunningFlask',
+                     mock.MagicMock(return_value=False))
   @mock.patch.object(utils, 'IsDevAppserver', mock.MagicMock(return_value=True))
   def testPost_DevAppserverSucceeds(self):
     token_info = self.PostAddHistogram(self.histogram_data)

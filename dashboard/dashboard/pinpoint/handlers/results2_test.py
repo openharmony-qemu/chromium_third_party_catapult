@@ -18,6 +18,8 @@ from dashboard.pinpoint import test
 class _Results2Test(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(_Results2Test, self).setUp()
 
     self._job_from_id = mock.MagicMock()
@@ -36,7 +38,7 @@ class Results2GetTest(_Results2Test):
     self._SetJob(None)
 
     response = self.testapp.get('/api/results2/456', status=400)
-    self.assertIn('Error', response.body)
+    self.assertIn(b'Error', response.body)
 
   @mock.patch.object(results2.results2, 'GetCachedResults2',
                      mock.MagicMock(return_value=None))
@@ -90,14 +92,18 @@ class Results2GeneratorPostTest(_Results2Test):
     mock_generate.side_effect = Results2Error('foo')
     self._SetJob(_JobStub('101112'))
 
-    response = self.testapp.post('/api/generate-results2/101112')
-    self.assertIn('foo', response.body)
+    response = self.testapp.post('/api/generate-results2/101112', status=400)
+    self.assertIn(b'foo', response.body)
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class _TaskStub(object):
   pass
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class _JobStub(object):
 
   def __init__(self, job_id, started=True, task=None):

@@ -100,6 +100,11 @@ class BrowserTestRunnerTest(unittest.TestCase):
              # We don't want the underlying tests to report their results to
              # ResultDB.
              '--disable-resultsink',
+             # These tests currently rely on some information sticking around
+              # between tests, so we need to use the older global process pool
+              # approach instead of having different pools scoped for
+              # parallel/serial execution.
+              '--use-global-pool',
             ] + extra_args)
     try:
       args = browser_test_runner.ProcessConfig(config, args)
@@ -679,6 +684,7 @@ class TestLoadAllTestModules(unittest.TestCase):
         'telemetry.testing.browser_test_runner_unittest.Algebra.TestNumber')
     context.test_case_ids_to_run.add(
         'telemetry.testing.browser_test_runner_unittest.Algebra.testOne')
+    context.disable_cloud_storage_io = True
     context.Freeze()
     browser_test_context._global_test_context = context
     try:

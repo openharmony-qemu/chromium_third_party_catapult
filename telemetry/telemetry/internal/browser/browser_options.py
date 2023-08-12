@@ -7,7 +7,7 @@ from __future__ import absolute_import
 import atexit
 import copy
 import logging
-import optparse
+import optparse  # pylint: disable=deprecated-module
 import os
 import shlex
 import socket
@@ -16,6 +16,7 @@ import sys
 from py_utils import cloud_storage  # pylint: disable=import-error
 
 from telemetry import compat_mode_options
+from telemetry.core import cast_interface
 from telemetry.core import platform
 from telemetry.core import util
 from telemetry.internal.browser import browser_finder
@@ -47,10 +48,10 @@ class BrowserFinderOptions(optparse.Values):
     self.chrome_root = None  # Path to src/
     self.chromium_output_dir = None  # E.g.: out/Debug
     self.device = None
-    self.cros_ssh_identity = None
+    self.ssh_identity = None
 
-    self.cros_remote = None
-    self.cros_remote_ssh_port = None
+    self.remote = None
+    self.remote_ssh_port = None
 
     self.verbosity = 0
 
@@ -106,6 +107,13 @@ class BrowserFinderOptions(optparse.Values):
         'in order of priority. Supported values: list,%s' %
         ', '.join(browser_finder.FindAllBrowserTypes()))
     group.add_option(
+        '--cast-receiver',
+        dest='cast_receiver_type',
+        default=None,
+        help='Cast Receiver type to run, '
+        'Supported values: list,%s' %
+        ', '.join(cast_interface.CAST_BROWSERS))
+    group.add_option(
         '--browser-executable',
         dest='browser_executable',
         help='The exact browser to run.')
@@ -122,14 +130,14 @@ class BrowserFinderOptions(optparse.Values):
         'CHROMIUM_OUTPUT_DIR.')
     group.add_option(
         '--remote',
-        dest='cros_remote',
+        dest='remote',
         help='The hostname of a remote ChromeOS device to use.')
     group.add_option(
         '--remote-ssh-port',
         type=int,
         # This is set in ParseArgs if necessary.
         default=-1,
-        dest='cros_remote_ssh_port',
+        dest='remote_ssh_port',
         help='The SSH port of the remote ChromeOS device (requires --remote).')
     compat_mode_options_list = [
         compat_mode_options.NO_FIELD_TRIALS,
@@ -170,7 +178,7 @@ class BrowserFinderOptions(optparse.Values):
       identity = testing_rsa
     group.add_option(
         '--identity',
-        dest='cros_ssh_identity',
+        dest='ssh_identity',
         default=identity,
         help='The identity file to use when ssh\'ing into the ChromeOS device')
     parser.add_option_group(group)
@@ -265,10 +273,22 @@ class BrowserFinderOptions(optparse.Values):
     )
     parser.add_option_group(group)
 
+    # Cast browser options
+    group = optparse.OptionGroup(parser, 'Cast browser options')
+    group.add_option('--cast-output-dir',
+                     help='Output directory for Cast Core.')
+    group.add_option('--cast-runtime-exe',
+                     help='Path to Cast Web Runtime executable.')
+    group.add_option('--local-cast',
+                     action="store_true", default=False,
+                     help='Use a local casting receiver on the host.')
+    group.add_option('--cast-device-ip',
+                     help='IP address of the Cast device.')
+
     group = optparse.OptionGroup(parser, 'Fuchsia platform options')
     group.add_option(
         '--fuchsia-ssh-config',
-        default='out/Release',
+        default=os.path.expanduser('~/.fuchsia/sshconfig'),
         help='Specify the ssh_config file used to connect to the Fuchsia OS.')
     group.add_option(
         '--fuchsia-device-address',
@@ -277,15 +297,17 @@ class BrowserFinderOptions(optparse.Values):
         '--fuchsia-ssh-port',
         type=int,
         help='The port on the host to which the ssh service running on the '
-        'Fuchsia device was forwarded. Will skip using the device-finder tool '
-        'if specified.')
+        'Fuchsia device was forwarded.')
     group.add_option(
         '--fuchsia-system-log-file',
         help='The file where Fuchsia system logs will be stored.')
     group.add_option(
         '--fuchsia-repo',
-        default="fuchsia.com",
+        default='fuchsia.com',
         help='The name of the Fuchsia repo used to serve required packages.')
+    group.add_option(
+        '--fuchsia-target-id',
+        help='The Fuchsia target id used by the ffx tool.')
     parser.add_option_group(group)
 
     # CPU profiling on Android/Linux/ChromeOS.
@@ -337,7 +359,7 @@ class BrowserFinderOptions(optparse.Values):
     def ParseArgs(args=None):
       defaults = parser.get_default_values()
       for k, v in defaults.__dict__.items():
-        if k in self.__dict__ and self.__dict__[k] != None:
+        if k in self.__dict__ and self.__dict__[k] is not None:
           continue
         self.__dict__[k] = v
       ret = real_parse(args, self)  # pylint: disable=E1121
@@ -391,14 +413,14 @@ class BrowserFinderOptions(optparse.Values):
 
       if ((self.browser_type == 'cros-chrome' or
            self.browser_type == 'lacros-chrome') and
-          self.cros_remote and (self.cros_remote_ssh_port < 0)):
+          self.remote and (self.remote_ssh_port < 0)):
         try:
-          self.cros_remote_ssh_port = socket.getservbyname('ssh')
+          self.remote_ssh_port = socket.getservbyname('ssh')
         except OSError as e:
           raise RuntimeError(
               'Running a CrOS test in remote mode, but failed to retrieve port '
               'used by SSH service. This likely means SSH is not installed on '
-              'the system. Original error: %s' % e)
+              'the system. Original error: %s' % e) from e
 
       # Profiling other periods along with the story_run period leads to running
       # multiple profiling processes at the same time. The effects of performing
@@ -425,7 +447,7 @@ class BrowserFinderOptions(optparse.Values):
     This check is used to sidestep any unnecessary work involved with searching
     for a browser that might not actually be needed. For example, this check
     could be used to prevent Telemetry from searching for a Clank browser if
-    browser_type is android-weblayer.
+    browser_type is android-webview.
     """
     return (browser_type == self.browser_type or
             self.browser_type in ('list', 'any',))
@@ -464,17 +486,17 @@ class BrowserFinderOptions(optparse.Values):
     # available, which we can't rely on, so use this to exit early in unittests.
     self._NoOpFunctionForTesting()
     sys.path.append(build_android_dir)
-    # pylint: disable=import-error
+    # pylint: disable=import-error,import-outside-toplevel
     from pylib import constants as pylib_constants
     from pylib.local.emulator import local_emulator_environment
-    # pylint: enable=import-error
+    # pylint: enable=import-error,import-outside-toplevel
 
     # We need to call this so that the Chromium output directory is set if it
     # is not explicitly specified via the command line argument/environment
     # variable.
     pylib_constants.CheckOutputDirectory()
 
-    class AvdArgs(object):
+    class AvdArgs():
       """A class to stand in for the AVD argparse.ArgumentParser object.
 
       Chromium's Android emulator code expects quite a few arguments from
@@ -498,6 +520,10 @@ class BrowserFinderOptions(optparse.Values):
         self.tool = None
         self.adb_path = None
         self.enable_device_cache = True
+        # We don't want to use a persistent shell for setting up an emulator
+        # as the persistent shell doesn't work until the emulator is already
+        # running.
+        self.use_persistent_shell = False
 
     avd_args = AvdArgs(self.avd_config)
     BrowserFinderOptions.emulator_environment =\
@@ -531,7 +557,7 @@ class BrowserFinderOptions(optparse.Values):
       self.ensure_value(k, v)
 
 
-class BrowserOptions(object):
+class BrowserOptions():
   """Options to be used for launching a browser."""
   # Allows clients to check whether they are dealing with a browser_options
   # object, without having to import this module. This may be needed in some
@@ -773,7 +799,7 @@ class ChromeBrowserOptions(BrowserOptions):
   """Chrome-specific browser options."""
 
   def __init__(self, br_options):
-    super(ChromeBrowserOptions, self).__init__()
+    super().__init__()
     # Copy to self.
     self.__dict__.update(br_options.__dict__)
 
@@ -782,7 +808,7 @@ class CrosBrowserOptions(ChromeBrowserOptions):
   """ChromeOS-specific browser options."""
 
   def __init__(self, br_options):
-    super(CrosBrowserOptions, self).__init__(br_options)
+    super().__init__(br_options)
     # Create a browser with oobe property.
     self.create_browser_with_oobe = False
     # Clear enterprise policy before logging in.

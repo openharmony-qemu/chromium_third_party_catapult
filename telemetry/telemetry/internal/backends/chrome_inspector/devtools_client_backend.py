@@ -6,8 +6,6 @@ from __future__ import absolute_import
 import logging
 import re
 import socket
-import sys
-import six
 
 from py_utils import exc_util
 from py_utils import retry_util
@@ -36,7 +34,7 @@ class UnsupportedVersionError(exceptions.Error):
 
 # Only versions of Chrome from M58 and above are supported. Older versions
 # did not support many of the modern features currently in use by Telemetry.
-MIN_SUPPORTED_BRANCH_NUMBER = 3029
+MIN_SUPPORTED_MAJOR_NUMBER = 58
 
 # The first WebSocket connections or calls against a newly-started
 # browser, specifically in Debug builds, can take a long time. Give
@@ -66,10 +64,10 @@ def GetDevToolsBackEndIfReady(devtools_port,
   return client
 
 
-class FuchsiaBrowserTargetNotFoundException(Exception):
+class BrowserTargetNotFoundException(Exception):
   pass
 
-class _DevToolsClientBackend(object):
+class _DevToolsClientBackend():
   """An object that communicates with Chrome's devtools.
 
   This class owns a map of InspectorBackends. It is responsible for creating
@@ -114,13 +112,13 @@ class _DevToolsClientBackend(object):
 
   @property
   def browser_target_url(self):
-    # For Fuchsia browsers, we get the browser_target through a JSON request
-    if self.platform_backend.GetOSName() == 'fuchsia':
+    # For Fuchsia and Cast browsers, get the browser_target through a JSON
+    # request
+    if self.platform_backend.GetOSName() in ['fuchsia', 'castos']:
       resp = self.GetVersion()
       if 'webSocketDebuggerUrl' in resp:
         return resp['webSocketDebuggerUrl']
-      raise FuchsiaBrowserTargetNotFoundException(
-          'Could not get the browser target.')
+      raise BrowserTargetNotFoundException('Could not get the browser target.')
     return 'ws://127.0.0.1:%i%s' % (self._local_port, self._browser_target)
 
   @property
@@ -143,7 +141,7 @@ class _DevToolsClientBackend(object):
 
   @property
   def has_tracing_client(self):
-    return self._tracing_backend != None
+    return self._tracing_backend is not None
 
   def Connect(self, devtools_port, browser_target, enable_tracing=True):
     try:
@@ -184,12 +182,12 @@ class _DevToolsClientBackend(object):
     self._browser_target = browser_target or '/devtools/browser'
     self._SetUpPortForwarding(devtools_port)
 
-    # If the agent is not alive and ready, trying to get the branch number will
+    # If the agent is not alive and ready, trying to get the major number will
     # raise a devtools_http.DevToolsClientConnectionError.
-    branch_number = self.GetChromeBranchNumber()
-    if branch_number < MIN_SUPPORTED_BRANCH_NUMBER:
+    major_number = self.GetChromeMajorNumber()
+    if major_number < MIN_SUPPORTED_MAJOR_NUMBER:
       raise UnsupportedVersionError(
-          'Chrome branch number %d is no longer supported' % branch_number)
+          'Chrome major number %d is no longer supported' % major_number)
 
     # Ensure that the inspector websocket is ready. This may raise a
     # inspector_websocket.WebSocketException or socket.error if not ready.
@@ -203,7 +201,8 @@ class _DevToolsClientBackend(object):
     # this config to initialize itself correctly.
     if enable_tracing:
       trace_config = (
-          self.platform_backend.tracing_controller_backend.GetChromeTraceConfig())
+          self.platform_backend.tracing_controller_backend \
+              .GetChromeTraceConfig())
       self._tracing_backend = tracing_backend.TracingBackend(
           self._browser_websocket, trace_config)
 
@@ -264,24 +263,24 @@ class _DevToolsClientBackend(object):
     """Return the version dict as provided by the DevTools agent."""
     return self._devtools_http.RequestJson('version')
 
-  def GetChromeBranchNumber(self):
+  def GetChromeMajorNumber(self):
     # Detect version information.
     resp = self.GetVersion()
     if 'Protocol-Version' in resp:
       if 'Browser' in resp:
-        branch_number_match = re.search(r'.+/\d+\.\d+\.(\d+)\.\d+',
-                                        resp['Browser'])
-      if not branch_number_match and 'User-Agent' in resp:
-        branch_number_match = re.search(
-            r'Chrome/\d+\.\d+\.(\d+)\.\d+ (Mobile )?Safari',
+        major_number_match = re.search(r'.+/(\d+)\.\d+\.\d+\.\d+',
+                                       resp['Browser'])
+      if not major_number_match and 'User-Agent' in resp:
+        major_number_match = re.search(
+            r'Chrome/(\d+)\.\d+\.\d+\.\d+ (Mobile )?Safari',
             resp['User-Agent'])
 
-      if branch_number_match:
-        branch_number = int(branch_number_match.group(1))
-        if branch_number:
-          return branch_number
+      if major_number_match:
+        major_number = int(major_number_match.group(1))
+        if major_number:
+          return major_number
 
-    # Branch number can't be determined, so fail any branch number checks.
+    # Major number can't be determined, so fail any major number checks.
     return 0
 
   def _ListInspectableContexts(self):
@@ -319,10 +318,9 @@ class _DevToolsClientBackend(object):
     try:
       return self._devtools_http.Request(
           'close/%s' % tab_id, timeout=timeout)
-    except devtools_http.DevToolsClientUrlError:
-      error = TabNotFoundError(
-          'Unable to close tab, tab id not found: %s' % tab_id)
-      six.reraise(error, None, sys.exc_info()[2])
+    except devtools_http.DevToolsClientUrlError as e:
+      raise TabNotFoundError(
+          'Unable to close tab, tab id not found: %s' % tab_id) from e
 
   def ActivateTab(self, tab_id, timeout):
     """Activates the tab with the given id.
@@ -334,10 +332,9 @@ class _DevToolsClientBackend(object):
     try:
       return self._devtools_http.Request(
           'activate/%s' % tab_id, timeout=timeout)
-    except devtools_http.DevToolsClientUrlError:
-      error = TabNotFoundError(
-          'Unable to activate tab, tab id not found: %s' % tab_id)
-      six.reraise(error, None, sys.exc_info()[2])
+    except devtools_http.DevToolsClientUrlError as e:
+      raise TabNotFoundError(
+          'Unable to activate tab, tab id not found: %s' % tab_id) from e
 
   def GetUrl(self, tab_id):
     """Returns the URL of the tab with |tab_id|, as reported by devtools.
@@ -396,7 +393,7 @@ class _DevToolsClientBackend(object):
         timeout: Time waited for websocket to receive a response.
     """
     if not self._tracing_backend:
-      return
+      return None
 
     assert trace_config and trace_config.enable_chrome_trace
     return self._tracing_backend.StartTracing(
@@ -573,7 +570,7 @@ class _DevToolsClientBackend(object):
     self._browser_websocket.SyncRequest(request, timeout=30)
 
 
-class _DevToolsContextMapBackend(object):
+class _DevToolsContextMapBackend():
   def __init__(self, devtools_client):
     self._devtools_client = devtools_client
     self._contexts = None

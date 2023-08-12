@@ -14,65 +14,77 @@ _CATAPULT_PATH = os.path.abspath(
 
 # Directories in catapult/third_party required by dashboard.
 THIRD_PARTY_LIBRARIES = [
-    'apiclient',
-    'beautifulsoup4',
-    'cachetools',
     'certifi',
-    'chardet',
     'cloudstorage',
     'depot_tools',
     'flot',
     'gae_ts_mon',
-    'google-auth',
     'graphy',
     'html5lib-python',
     'idna',
-    'ijson',
     'jquery',
     'mapreduce',
-    'mock',
-    'oauth2client',
     'pipeline',
     'polymer',
     'polymer-svg-template',
     'polymer2/bower_components',
     'polymer2/bower_components/chopsui',
-    'pyasn1',
-    'pyasn1_modules',
-    'pyparsing',
     'redux/redux.min.js',
     'requests',
     'requests_toolbelt',
-    'rsa',
     'six',
-    'uritemplate',
     'urllib3',
     'webapp2',
-    'webtest',
 ]
 
+# Add third party libraries needed *copying* for python 2. When running in
+# python 3, those libraries should be installed either by pip or vpython.
 THIRD_PARTY_LIBRARIES_PY2 = THIRD_PARTY_LIBRARIES + [
-    'httplib2/python2/httplib2'
+    'apiclient',
+    'beautifulsoup4',
+    'cachetools',
+    'chardet',
+    'click',
+    'flask',
+    'google-auth',
+    'httplib2/python2/httplib2',
+    'ijson',
+    'itsdangerous',
+    'jinja2',
+    'markupsafe',
+    'mock',
+    'oauth2client',
+    'pyasn1',
+    'pyasn1_modules',
+    'pyparsing',
+    'rsa',
+    'uritemplate',
+    'webtest',
+    'werkzeug',
 ]
 
-THIRD_PARTY_LIBRARIES_PY3 = THIRD_PARTY_LIBRARIES + [
-    'httplib2/python3/httplib2'
-]
+THIRD_PARTY_LIBRARIES_PY3 = THIRD_PARTY_LIBRARIES
 
 # Files and directories in catapult/dashboard.
 DASHBOARD_FILES = [
     'api.yaml',
+    'api-py3.yaml',  # remove after py3 migration is finalized.
     'app.yaml',
+    'app-py3.yaml',  # remove after py3 migration is finalized.
     'appengine_config.py',
     'cron.yaml',
     'dashboard',
     'dispatch.yaml',
     'index.yaml',
     'pinpoint.yaml',
+    'pinpoint-py3.yaml',  # remove after py3 migration is finalized.
     'queue.yaml',
+    'requirements.txt',
     'scripts.yaml',
     'upload-processing.yaml',
+    'upload-processing-py3.yaml',  # remove after py3 migration is finalized.
     'upload.yaml',
+    'upload-py3.yaml',  # remove after py3 migration is finalized.
 ]
 
 TRACING_PATHS = [
@@ -138,19 +150,26 @@ def _AllSdkThirdPartyLibraryPaths():
     appengine_path = os.path.join(sdk_bin_path, 'platform', 'google_appengine')
     paths.append(appengine_path)
     sys.path.insert(0, appengine_path)
-    break
 
   try:
-    import dev_appserver
+    # pylint: disable=import-outside-toplevel
+    if sys.version_info.major == 2:
+      import dev_appserver
+    else:
+      # dev_appserver is not ready for python 3. Try import google.appengine
+      # for validation purpose.
+      import google.appengine  # pylint: disable=unused-import
   except ImportError:
     # TODO: Put the Cloud SDK in the path with the binary dependency manager.
     # https://github.com/catapult-project/catapult/issues/2135
-    print('This script requires the Google Cloud SDK to be in PATH.')
-    print('Install at https://cloud.google.com/sdk and then run')
-    print('`gcloud components install app-engine-python`')
+    print('This script requires the Google Cloud SDK to be in PYTHONPATH.')
+    print(
+        'See https://chromium.googlesource.com/catapult/+/HEAD/dashboard/README.md'
+    )
     sys.exit(1)
 
-  paths.extend(dev_appserver.EXTRA_PATHS)
+  if sys.version_info.major == 2:
+    paths.extend(dev_appserver.EXTRA_PATHS)
   return paths
 
 
@@ -159,8 +178,7 @@ def _CatapultThirdPartyLibraryPaths():
   paths = []
   paths.append(
       os.path.join(_CATAPULT_PATH, 'common', 'node_runner', 'node_runner',
-                   'node_modules', '@chopsui', 'tsmon-client',
-                   'tsmon-client.js'))
+                   'node_modules', '@chopsui'))
   third_party_libraries = (
       THIRD_PARTY_LIBRARIES_PY3 if sys.version_info.major == 3
       else THIRD_PARTY_LIBRARIES_PY2)

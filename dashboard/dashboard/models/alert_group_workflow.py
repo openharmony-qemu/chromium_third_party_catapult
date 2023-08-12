@@ -93,6 +93,8 @@ class InvalidPinpointRequest(Exception):
   pass
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class AlertGroupWorkflow(object):
   """Workflow used to manipulate the AlertGroup.
 
@@ -166,12 +168,7 @@ class AlertGroupWorkflow(object):
     if issue.get('status') != issue_tracker_service.STATUS_DUPLICATE:
       return None
 
-    merged_into = None
-    latest_id = 0
-    for comment in issue.get('comments', []):
-      if comment['updates'].get('mergedInto') and comment['id'] >= latest_id:
-        merged_into = int(comment['updates'].get('mergedInto'))
-        latest_id = comment['id']
+    merged_into = issue.get('mergedInto', {}).get('issueId', None)
     if not merged_into:
       return None
     logging.info('Found canonical issue for the groups\' issue: %d',
@@ -179,9 +176,8 @@ class AlertGroupWorkflow(object):
 
     query = alert_group.AlertGroup.query(
         alert_group.AlertGroup.active == True,
-        # It is impossible to merge bugs from different projects in monorail.
-        # So the canonical group bug is guarandeed to have the same project.
-        alert_group.AlertGroup.bug.project == self._group.bug.project,
+        alert_group.AlertGroup.bug.project == issue.get('mergedInto', {}).get(
+            'projectId', self._group.bug.project),
         alert_group.AlertGroup.bug.bug_id == merged_into)
     query_result = query.fetch(limit=1)
     if not query_result:
@@ -399,7 +395,10 @@ class AlertGroupWorkflow(object):
         issue.get('comments') or [], key=lambda c: c["id"], reverse=True):
       if c.get('updates', {}).get('status') in ('WontFix', 'Fixed', 'Verified',
                                                 'Invalid', 'Duplicate', 'Done'):
-        closed_by_pinpoint = (c.get('author') == self._service_account())
+        closed_by_pinpoint = (
+            c.get('author') in [
+                self._service_account(), utils.LEGACY_SERVICE_ACCOUNT
+            ])
         break
 
     has_new_regression = any(a.auto_bisect_enable
@@ -493,19 +492,14 @@ class AlertGroupWorkflow(object):
     regressions = []
     subscriptions_dict = {}
     for a in anomalies:
-      # This logging is just for debugging
-      # https://bugs.chromium.org/p/chromium/issues/detail?id=1223401
-      # in production since I can't reproduce it in unit tests. One theory I
-      # have is that there's a bug in this part of the code, where
-      # details of one anomaly's subscription get replaced with another
-      # anomaly's subscription.
-      for s in a.subscriptions:
-        if (s.name in subscriptions_dict and s.auto_triage_enable !=
-            subscriptions_dict[s.name].auto_triage_enable):
-          logging.warning('altered merged auto_triage_enable: %s', s.name)
+      logging.info(
+          'GetRegressions: auto_triage_enable is %s for anomaly %s due to subscription: %s',
+          a.auto_triage_enable,
+          a.test.string_id(),
+          [s.name for s in a.subscriptions])
 
       subscriptions_dict.update({s.name: s for s in a.subscriptions})
-      if not a.is_improvement and not a.recovered:
+      if not a.is_improvement and not a.recovered and a.auto_triage_enable:
         regressions.append(a)
     return (regressions, list(subscriptions_dict.values()))
 
@@ -778,9 +772,15 @@ class AlertGroupWorkflow(object):
 
   def _NewPinpointRequest(self, alert):
     start_git_hash = pinpoint_request.ResolveToGitHash(
-        alert.start_revision, alert.benchmark_name, crrev=self._crrev)
+        alert.start_revision - 1, alert.benchmark_name, crrev=self._crrev)
     end_git_hash = pinpoint_request.ResolveToGitHash(
         alert.end_revision, alert.benchmark_name, crrev=self._crrev)
+    logging.info(
+        """
+        Making new pinpoint request. Alert start revision: %s; end revision: %s.
+         Pinpoint start hash (one position back): %s, end hash: %s'
+         """, alert.start_revision, alert.end_revision, start_git_hash,
+        end_git_hash)
 
     # Pinpoint also requires you specify which isolate target to run the
     # test, so we derive that from the suite name. Eventually, this would
@@ -796,7 +796,6 @@ class AlertGroupWorkflow(object):
                                             alert.benchmark_name)
 
     alert_magnitude = alert.median_after_anomaly - alert.median_before_anomaly
-
     return pinpoint_service.MakeBisectionRequest(
         test=alert.test.get(),
         commit_range=pinpoint_service.CommitRange(
@@ -812,7 +811,7 @@ class AlertGroupWorkflow(object):
         priority=10,
         tags={
             'test_path': utils.TestPath(alert.test),
-            'alert': alert.key.urlsafe(),
+            'alert': six.ensure_str(alert.key.urlsafe()),
             'auto_bisection': 'true',
         },
     )

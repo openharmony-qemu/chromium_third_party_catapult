@@ -16,9 +16,13 @@ from dashboard.pinpoint.models import scheduler
 
 
 @mock.patch('dashboard.common.utils.ServiceAccountHttp', mock.MagicMock())
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=["a"]))
 class CancelJobTest(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(CancelJobTest, self).setUp()
     self.SetCurrentUserOAuth(testing_common.INTERNAL_USER)
     self.SetCurrentClientIdOAuth(api_auth.OAUTH_CLIENT_ID_ALLOWLIST[0])

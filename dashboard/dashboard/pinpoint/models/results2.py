@@ -7,20 +7,31 @@ from __future__ import division
 from __future__ import absolute_import
 
 import collections
-import cloudstorage
 import logging
 import os
 import uuid
+import six
+import sys
+import json
 
 from google.appengine.api import taskqueue
 from google.appengine.ext import ndb
 
+if six.PY2:
+  import cloudstorage
+else:
+  try:
+    import cloudstorage.cloudstorage as cloudstorage
+  except ImportError:
+    # This is a work around to fix the discrepency on file tree in tests.
+    import cloudstorage
 from apiclient.discovery import build
+from dashboard.common import utils
+from dashboard.common import oauth2_utils
 from dashboard.pinpoint.models import job_state
 from dashboard.pinpoint.models.quest import read_value
 from dashboard.pinpoint.models.quest import run_test
 from dashboard.services import swarming
-from oauth2client import client
 from tracing_build import render_histograms_viewer
 from tracing.value import gtest_json_converter
 from tracing.value.diagnostics import generic_set
@@ -58,7 +69,85 @@ _METRIC_MAP = {
     "VueJS-TodoMVC": ("speedometer2", "VueJS_TodoMVC"),
 
     # MotionMark
-    "motionmark": ("motionmark", "motionmark")
+    "motionmark": ("motionmark", "motionmark"),
+
+    # Jetstream2
+    # BQ unhappy if name starts with numeric
+    "3d-cube-SP.Average": ("jetstream2", "cube_3d_SP_Average"),
+    "3d-raytrace-SP.Average": ("jetstream2", "raytrace_3d_SP_Average"),
+    "Air.Average": ("jetstream2", "Air_Average"),
+    "Babylon.Average": ("jetstream2", "Babylon_Average"),
+    "Basic.Average": ("jetstream2", "Basic_Average"),
+    "Box2D.Average": ("jetstream2", "Box2D_Average"),
+    "FlightPlanner.Average": ("jetstream2", "FlightPlanner_Average"),
+    "HashSet-wasm.Runtime": ("jetstream2", "HashSet_wasm_Runtime"),
+    "ML.Average": ("jetstream2", "ML_Average"),
+    "OfflineAssembler.Average": ("jetstream2", "OfflineAssembler_Average"),
+    "Score": ("jetstream2", "Score"),
+    "UniPoker.Average": ("jetstream2", "UniPoker_Average"),
+    "WSL.MainRun": ("jetstream2", "WSL_MainRun"),
+    "acorn-wtb.Average": ("jetstream2", "acorn_wtb_Average"),
+    "ai-astar.Average": ("jetstream2", "ai_astar_Average"),
+    "async-fs.Average": ("jetstream2", "async_fs_Average"),
+    "babylon-wtb.Average": ("jetstream2", "babylon_wtb_Average"),
+    "base64-SP.Average": ("jetstream2", "base64_SP_Average"),
+    "bomb-workers.Average": ("jetstream2", "bomb_workers_Average"),
+    "cdjs.Average": ("jetstream2", "cdjs_Average"),
+    "chai-wtb.Average": ("jetstream2", "chai_wtb_Average"),
+    "coffeescript-wtb.Average": ("jetstream2", "coffeescript_wtb_Average"),
+    "crypto-aes-SP.Average": ("jetstream2", "crypto_aes_SP_Average"),
+    "crypto-md5-SP.Average": ("jetstream2", "crypto_md5_SP_Average"),
+    "crypto-shal-SP.Average": ("jetstream2", "crypto_shal_SP_Average"),
+    "crypto.Average": ("jetstream2", "crypto_Average"),
+    "date-format-tofte-SP.Average":
+        ("jetstream2", "date_format_tofte_SP_Average"),
+    "date-format-xparb-SP.Average":
+        ("jetstream2", "date_format_xparb_SP_Average"),
+    "delta-blue.Average": ("jetstream2", "delta_blue_Average"),
+    "earley-boyer.Average": ("jetstream2", "earley_boyer_Average"),
+    "espree-wtb.Average": ("jetstream2", "espree_wtb_Average"),
+    "first-inspector-code-load.Average":
+        ("jetstream2", "first_inspector_code_load_Average"),
+    "float-mm_c.Average": ("jetstream2", "float_mm_c_Average"),
+    "gaussian-blur.Average": ("jetstream2", "gaussian_blur_Average"),
+    "gbemu.Average": ("jetstream2", "gbemu_Average"),
+    "gcc-loops-wasm.Runtime": ("jetstream2", "gcc_loops_wasm_Runtime"),
+    "hash-map.Average": ("jetstream2", "hash_map_Average"),
+    "jshint-wtb.Average": ("jetstream2", "jshint_wtb_Average"),
+    "json-parse-inspector.Average":
+        ("jetstream2", "json_parse_inspector_Average"),
+    "json-stringify-inspector.Average":
+        ("jetstream2", "json_stringify_inspector_Average"),
+    "lebab-wtb.Average": ("jetstream2", "lebab_wtb_Average"),
+    "mandreel.Average": ("jetstream2", "mandreel_Average"),
+    "multi-inspector-code-load.Average":
+        ("jetstream2", "multi_inspector_code_load_Average"),
+    "n-body-SP.Average": ("jetstream2", "n_body_SP_Average"),
+    "navier-stokes.Average": ("jetstream2", "navier_stokes_Average"),
+    "octane-code-load.Average": ("jetstream2", "octane_code_load_Average"),
+    "octane-zlib.Average": ("jetstream2", "octane_zlib_Average"),
+    "pdfjs.Average": ("jetstream2", "pdfjs_Average"),
+    "prepack-wtb.Average": ("jetstream2", "prepack_wtb_Average"),
+    "quicksort-wasm.Runtime": ("jetstream2", "quicksort_wasm_Runtime"),
+    "raytrace.Average": ("jetstream2", "raytrace_Average"),
+    "regex-dna-SP.Average": ("jetstream2", "regex_dna_SP_Average"),
+    "regexp.Average": ("jetstream2", "regexp_Average"),
+    "richards-wasm.Runtime": ("jetstream2", "richards_wasm_Runtime"),
+    "richards.Average": ("jetstream2", "richards_Average"),
+    "segmentation.Average": ("jetstream2", "segmentation_Average"),
+    "splay.Average": ("jetstream2", "splay_Average"),
+    "stanford-crypto-aes.Average":
+        ("jetstream2", "stanford_crypto_aes_Average"),
+    "stanford-crypto-pbkdf2.Average":
+        ("jetstream2", "stanford_crypto_pbkdf2_Average"),
+    "stanford-crypto-sha256.Average":
+        ("jetstream2", "stanford_crypto_sha256_Average"),
+    "string-unpack-code-SP.Average":
+        ("jetstream2", "string_unpack_code_SP_Average"),
+    "tagcloud-SP.Average": ("jetstream2", "tagcloud_SP_Average"),
+    "tsf-wasm.Runtime": ("jetstream2", "tsf_wasm_Runtime"),
+    "typescript.Average": ("jetstream2", "typescript_Average"),
+    "uglify-js-wtb.Average": ("jetstream2", "uglify_js_wtb_Average"),
 }
 
 _PROJECT_ID = 'chromeperf'
@@ -82,6 +171,8 @@ class CachedResults2(ndb.Model):
   job_id = ndb.StringProperty()
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class _GcsFileStream(object):
   """Wraps a gcs file providing a FileStream like api."""
 
@@ -97,19 +188,23 @@ class _GcsFileStream(object):
     pass
 
   def write(self, data):
-    self._gcs_file.write(data)
+    self._gcs_file.write(six.ensure_binary(data))
 
   def close(self):
     self._gcs_file.close()
 
 
 def _GetCloudStorageName(job_id):
+  if utils.IsStagingEnvironment():
+    return '/chromeperf-staging-results2-public/%s.html' % job_id
   return '/results2-public/%s.html' % job_id
 
 
 def GetCachedResults2(job):
+  logging.info('JobQueueDebug: Running result2. ID: %s', job.job_id)
   filename = _GetCloudStorageName(job.job_id)
   results = cloudstorage.listbucket(filename)
+  logging.info('JobQueueDebug: Finished result2. ID: %s', job.job_id)
 
   for _ in results:
     return 'https://storage.cloud.google.com' + filename
@@ -122,15 +217,20 @@ def ScheduleResults2Generation(job):
   try:
     # Don't want several tasks creating results2, so create task with specific
     # name to deduplicate.
+    logging.info('JobQueueDebug: Adding result2. ID: %s', job.job_id)
     task_name = 'results2-public-%s' % job.job_id
     taskqueue.add(
         queue_name='job-queue',
         url='/api/generate-results2/' + job.job_id,
         name=task_name)
   except taskqueue.TombstonedTaskError:
+    logging.info(
+        'A task with the same name has executed in the queue. Job [%s]',
+        job.job_id)
     return False
   except taskqueue.TaskAlreadyExistsError:
-    pass
+    logging.info('The task already exists. It has not yet run. Job [%s]',
+                 job.job_id)
   return True
 
 
@@ -177,7 +277,7 @@ def _ReadVulcanizedHistogramsViewer():
   viewer_path = os.path.join(
       os.path.dirname(__file__), '..', '..', '..',
       'vulcanized_histograms_viewer', 'vulcanized_histograms_viewer.html')
-  with open(viewer_path, 'r') as f:
+  with open(viewer_path, 'rb') as f:
     return f.read()
 
 HistogramMetadata = collections.namedtuple(
@@ -193,13 +293,17 @@ def _FetchHistograms(job):
       for execution in attempt.executions:
         # Attempt to extract taskID if this is a run_test._RunTestExecution
         if isinstance(execution, run_test._RunTestExecution):
+          # crbug/1352875. task_id can be None if the pinpoint job is cancelled.
+          if execution._task_id is None:
+            logging.warning('Swarming task id is None for the execution. Skip.')
+            continue
           # Query Swarming
           try:
             swarming_task = swarming.Swarming(execution._swarming_server).Task(
                 execution._task_id)
             swarming_result = swarming_task.Result()
           except Exception as e:  # pylint: disable=broad-except
-            logging.error("_FetchHistograms swarming query failed: " + str(e))
+            logging.error("_FetchHistograms swarming query failed: %s", str(e))
           continue
 
         # Attempt to extract Histograms if this is a read_value.*
@@ -281,7 +385,7 @@ def _SaveJobToGeneralBigQuery(job):
     row["metric"] = h.histogram["name"]
     row["values"] = h.histogram["sampleValues"]
     rows.append(row)
-  if len(rows):
+  if rows:
     _InsertBQRows(_PROJECT_ID, _DATASET_GENERAL, _TABLE_GENERAL, rows)
 
 RowKey = collections.namedtuple('RowKey', ['change', 'iteration'])
@@ -313,6 +417,7 @@ def _GetEmptyMeasures():
   measures["core_web_vitals"] = {}
   measures["speedometer2"] = {}
   measures["motionmark"] = {}
+  measures["jetstream2"] = {}
   return measures
 
 
@@ -329,10 +434,14 @@ def _PopulateMetadata(job, h):
   md["job_start_time"] = _ConvertDatetimeToBQ(job.started_time)
   md["batch_id"] = job.batch_id
   md["run_id"] = job.job_id
+  md["attempt_count"] = job.state.attempt_count
   md["dims"] = {}
   md["dims"]["device"] = {}
   md["dims"]["device"]["cfg"] = job.configuration
-  if h.metadata.swarming_result and "bot_dimensions" in h.metadata.swarming_result:
+  if h.metadata.swarming_result:
+    md["dims"]["start_time"] = _ConvertTsToBQ(
+        h.metadata.swarming_result["started_ts"])
+    md["dims"]["swarming_task_id"] = h.metadata.swarming_result["run_id"]
     # bot_dimensions is a list of dicts with "key" and "value" entries.
     for kv in h.metadata.swarming_result["bot_dimensions"]:
       if kv["key"] == "device_os":
@@ -371,6 +480,11 @@ def _PopulateMetadata(job, h):
 def _ConvertIsotimeToBQ(it):
   return it.replace('T', ' ') + ".000000"
 
+
+def _ConvertTsToBQ(it):
+  return it.replace('T', ' ')
+
+
 def _ConvertDatetimeToBQ(dt):
   return dt.strftime('%Y-%m-%d %H:%M:%S.%f')
 
@@ -378,23 +492,46 @@ def _ConvertDatetimeToBQ(dt):
 def _InsertBQRows(project_id, dataset_id, table_id, rows, num_retries=5):
   service = _BQService()
   rows = [{'insertId': str(uuid.uuid4()), 'json': row} for row in rows]
-  insert_data = {'rows': rows}
-  logging.info("Saving to BQ: " + str(insert_data))
-  response = service.tabledata().insertAll(
+  logging.info("Saving %d rows to BQ. Total size: %d.", len(rows),
+               sys.getsizeof(json.dumps(rows)))
+  row_data_list = _CreateRowDataLists(rows)
+  for i, row_list in enumerate(row_data_list):
+    logging.info('Saving rows to BQ. Batch #%d with size %d.', i,
+                 sys.getsizeof(json.dumps(row_list)))
+    response = _RequestInsertBQRows(service, project_id, dataset_id, table_id,
+                                    row_list, num_retries)
+    if 'insertErrors' in response:
+      logging.error("Insert failed: %s", str(response))
+
+
+def _RequestInsertBQRows(service,
+                         project_id,
+                         dataset_id,
+                         table_id,
+                         row_list,
+                         num_retries=5):
+  return service.tabledata().insertAll(
       projectId=project_id,
       datasetId=dataset_id,
       tableId=table_id,
-      body=insert_data).execute(num_retries=num_retries)
-
-  if 'insertErrors' in response:
-    logging.error("Insert failed: " + str(response))
+      body={
+          'rows': row_list
+      }).execute(num_retries=num_retries)
 
 
 def _BQService():
   """Returns an initialized and authorized BigQuery client."""
   # pylint: disable=no-member
-  credentials = client.GoogleCredentials.get_application_default()
-  if credentials.create_scoped_required():
-    credentials = credentials.create_scoped(
-        'https://www.googleapis.com/auth/bigquery')
+  credentials = oauth2_utils.GetAppDefaultCredentials(
+      scope='https://www.googleapis.com/auth/bigquery')
   return build('bigquery', 'v2', credentials=credentials)
+
+
+def _CreateRowDataLists(rows):
+  # crbug/1340323, crbug/1352869
+  # We saw complains on query size in Python 3 runtime. In order to limit the
+  # size, we will separate the rows into multiple batches. Without a good
+  # estimate, we are using 1000 rows as a conservative guess.
+  batch_size = 1000
+
+  return [rows[i:i + batch_size] for i in range(0, len(rows), batch_size)]

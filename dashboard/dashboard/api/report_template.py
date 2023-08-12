@@ -10,6 +10,7 @@ import json
 import six
 
 from dashboard.api import api_request_handler
+from dashboard.common import utils
 from dashboard.models import report_template
 
 
@@ -21,6 +22,7 @@ class ReportTemplateHandler(api_request_handler.ApiRequestHandler):
 
   def Post(self, *args, **kwargs):
     del args, kwargs  # Unused.
+    utils.LogObsoleteHandlerUsage(self, 'POST')
     template = json.loads(self.request.get('template'))
     name = self.request.get('name', None)
     owners = self.request.get('owners', None)

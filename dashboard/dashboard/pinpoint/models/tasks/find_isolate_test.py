@@ -23,9 +23,13 @@ from dashboard.pinpoint.models.tasks import find_isolate
 class FindIsolateEvaluatorBase(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(FindIsolateEvaluatorBase, self).setUp()
     self.maxDiff = None  # pylint: disable=invalid-name
-    self.job = job_module.Job.New((), ())
+    with mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+                    mock.MagicMock(return_value=["a"])):
+      self.job = job_module.Job.New((), ())
     task_module.PopulateTaskGraph(
         self.job,
         find_isolate.CreateGraph(
@@ -218,6 +222,8 @@ class FindIsolateEvaluatorTest(FindIsolateEvaluatorBase):
 class FindIsolateEvaluatorUpdateTests(FindIsolateEvaluatorBase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(FindIsolateEvaluatorUpdateTests, self).setUp()
 
     # Here we set up the pre-requisite for polling, where we've already had a

@@ -17,6 +17,8 @@ from dashboard.pinpoint.models import job as job_module
 from dashboard.pinpoint import test
 
 
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=["a"]))
 class RefreshJobsTest(test.TestCase):
 
   def setUp(self):
@@ -27,6 +29,8 @@ class RefreshJobsTest(test.TestCase):
     self.stream_handler = logging.StreamHandler(sys.stdout)
     self.logger.addHandler(self.stream_handler)
     self.addCleanup(self.logger.removeHandler, self.stream_handler)
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(RefreshJobsTest, self).setUp()
 
   def testGet(self):
@@ -74,21 +78,19 @@ class RefreshJobsTest(test.TestCase):
     self.assertFalse(cancelled_job.running)
     self.assertEqual(cancelled_job.status, 'Cancelled')
 
-  def testGet_RetryLimit(self):
+  @mock.patch('dashboard.pinpoint.models.job.Job._Schedule')
+  @mock.patch('dashboard.pinpoint.models.job.Job.Fail')
+  def testGet_RetryLimit(self, mock_fail, mock_schedule):
     j1 = job_module.Job.New((), ())
     j1.task = '123'
     j1.started = True
     j1.put()
-    j1._Schedule = mock.MagicMock()
-    j1.Fail = mock.MagicMock()
 
     j2 = job_module.Job.New((), ())
     j2.task = '123'
     j2.started = True
     j2.updated = datetime.datetime.utcnow() - datetime.timedelta(hours=8)
     j2.put()
-    j2._Schedule = mock.MagicMock()
-    j2.Fail = mock.MagicMock()
 
     layered_cache.Set(refresh_jobs._JOB_CACHE_KEY % j2.job_id,
                       {'retries': refresh_jobs._JOB_MAX_RETRIES})
@@ -97,11 +99,8 @@ class RefreshJobsTest(test.TestCase):
 
     self.ExecuteDeferredTasks('default')
 
-    self.assertFalse(j1._Schedule.called)
-    self.assertFalse(j1.Fail.called)
-
-    self.assertFalse(j2._Schedule.called)
-    self.assertTrue(j2.Fail.called)
+    self.assertEqual(mock_schedule.call_count, 0)
+    self.assertEqual(mock_fail.call_count, 1)
 
   def testGet_OverRetryLimit(self):
     j1 = job_module.Job.New((), ())

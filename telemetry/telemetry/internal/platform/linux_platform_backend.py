@@ -41,7 +41,7 @@ class LinuxPlatformBackend(
     posix_platform_backend.PosixPlatformBackend,
     linux_based_platform_backend.LinuxBasedPlatformBackend):
   def __init__(self):
-    super(LinuxPlatformBackend, self).__init__()
+    super().__init__()
 
   @classmethod
   def IsPlatformBackendForHost(cls):
@@ -90,7 +90,20 @@ class LinuxPlatformBackend(
     raise NotImplementedError('Unknown Linux OS version')
 
   def GetOSVersionDetailString(self):
-    return ''  # TODO(kbr): Implement this.
+    # First try os-release
+    for path in ('/etc/os-release', '/usr/lib/os-release'):
+      os_release = self._ReadReleaseFile(path)
+      if os_release:
+        codename = os_release.get('NAME')
+        version = os_release.get('VERSION')
+        return codename + ' ' + version
+
+    # Use lsb-release as a fallback.
+    lsb_release = self._ReadReleaseFile('/etc/lsb-release')
+    if lsb_release:
+      return lsb_release.get('DISTRIB_DESCRIPTION')
+
+    raise NotImplementedError('Missing Linux OS name or version')
 
   def CanTakeScreenshot(self):
     return_code = subprocess.call(['which', 'gnome-screenshot'])
@@ -114,7 +127,7 @@ class LinuxPlatformBackend(
   def CanLaunchApplication(self, application):
     if application == 'ipfw' and not self._IsIpfwKernelModuleInstalled():
       return False
-    return super(LinuxPlatformBackend, self).CanLaunchApplication(application)
+    return super().CanLaunchApplication(application)
 
   def InstallApplication(self, application):
     if application == 'ipfw':

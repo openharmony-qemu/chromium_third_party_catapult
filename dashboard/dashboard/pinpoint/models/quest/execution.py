@@ -8,11 +8,19 @@ from __future__ import absolute_import
 
 import traceback
 
-from oauth2client import client
-
 from dashboard.pinpoint.models import errors
+import six
+
+if six.PY2:
+  from oauth2client import client
+  TokenRefreshError = client.AccessTokenRefreshError
+else:
+  from google.auth import exceptions
+  TokenRefreshError = exceptions.RefreshError
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class Execution(object):
   """Object tracking the execution of a Quest.
 
@@ -81,7 +89,7 @@ class Execution(object):
   # crbug.com/971370
   def __setstate__(self, state):
     self.__dict__ = state  # pylint: disable=attribute-defined-outside-init
-    if isinstance(self._exception, basestring):
+    if isinstance(self._exception, six.string_types):
       self._exception = {
           'message': self._exception.splitlines()[-1],
           'traceback': self._exception
@@ -94,7 +102,7 @@ class Execution(object):
         'details': self._AsDict(),
     }
 
-    if isinstance(self._exception, basestring):
+    if isinstance(self._exception, six.string_types):
       d['exception'] = {
           'message': self._exception.splitlines()[-1],
           'traceback': self._exception
@@ -119,7 +127,7 @@ class Execution(object):
 
     try:
       self._Poll()
-    except client.AccessTokenRefreshError as e:
+    except TokenRefreshError as e:
       raise errors.RecoverableError(e)
     except (errors.FatalError, RuntimeError):
       # Some built-in exceptions are derived from RuntimeError which we'd like
@@ -132,8 +140,9 @@ class Execution(object):
       tb = traceback.format_exc()
       if hasattr(e, 'task_output'):
         tb += '\n%s' % getattr(e, 'task_output')
-      self._exception = {'message': e.message, 'traceback': tb}
-    except:
+      self._exception = {'message': str(e), 'traceback': tb}
+    # TODO(https://crbug.com/1262292): use `faise from` when Python2 trybots retire.
+    except:  # pylint: disable=try-except-raise
       # All other exceptions must be propagated.
       raise
 

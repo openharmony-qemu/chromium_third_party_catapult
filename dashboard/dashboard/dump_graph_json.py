@@ -32,6 +32,7 @@ class DumpGraphJsonHandler(request_handler.RequestHandler):
 
   def get(self):
     """Handles dumping dashboard data."""
+    utils.LogObsoleteHandlerUsage(self, 'GET')
     if self.request.get('sheriff'):
       self._DumpAnomalyDataForSheriff()
     elif self.request.get('test_path'):

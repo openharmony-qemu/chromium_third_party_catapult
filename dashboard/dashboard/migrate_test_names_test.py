@@ -42,6 +42,8 @@ _MOCK_DATA = [['ChromiumPerf'], ['win7', 'mac'], {
 class MigrateTestNamesTest(testing_common.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(MigrateTestNamesTest, self).setUp()
     app = webapp2.WSGIApplication([
         ('/migrate_test_names', migrate_test_names.MigrateTestNamesHandler)
@@ -323,7 +325,7 @@ class MigrateTestNamesTest(testing_common.TestCase):
     messages = self.mail_stub.get_sent_messages()
     self.assertEqual(2, len(messages))
     self.assertEqual('gasper-alerts@google.com', messages[0].sender)
-    self.assertEqual('chrome-performance-monitoring-alerts@google.com',
+    self.assertEqual('browser-perf-engprod@google.com',
                      messages[0].to)
     self.assertEqual('Sheriffed Test Migrated', messages[0].subject)
     body = str(messages[0].body)
@@ -332,7 +334,7 @@ class MigrateTestNamesTest(testing_common.TestCase):
     self.assertIn('migrated to ChromiumPerf/mac/moz/read_operations_browser',
                   body)
     self.assertEqual('gasper-alerts@google.com', messages[1].sender)
-    self.assertEqual('chrome-performance-monitoring-alerts@google.com',
+    self.assertEqual('browser-perf-engprod@google.com',
                      messages[1].to)
     self.assertEqual('Sheriffed Test Migrated', messages[1].subject)
     body = str(messages[1].body)

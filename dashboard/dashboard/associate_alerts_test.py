@@ -12,10 +12,6 @@ import mock
 import webapp2
 import webtest
 
-# pylint: disable=unused-import
-from dashboard import mock_oauth2_decorator
-# pylint: enable=unused-import
-
 from dashboard import associate_alerts
 from dashboard.common import testing_common
 from dashboard.common import utils
@@ -27,6 +23,8 @@ from dashboard.services import issue_tracker_service
 class AssociateAlertsTest(testing_common.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(AssociateAlertsTest, self).setUp()
     app = webapp2.WSGIApplication([('/associate_alerts',
                                     associate_alerts.AssociateAlertsHandler)])
@@ -112,6 +110,7 @@ class AssociateAlertsTest(testing_common.TestCase):
     self.assertIn('Invalid bug ID', response.body)
 
   # Mocks fetching bugs from issue tracker.
+  @mock.patch('dashboard.common.utils.ServiceAccountHttp', mock.MagicMock())
   @mock.patch('services.issue_tracker_service.discovery.build',
               mock.MagicMock())
   @mock.patch.object(

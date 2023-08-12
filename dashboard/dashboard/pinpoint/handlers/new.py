@@ -10,8 +10,10 @@ import json
 import logging
 import shlex
 import six
+import uuid
 
 from dashboard.api import api_request_handler
+from dashboard.api import api_auth
 from dashboard.common import bot_configurations
 from dashboard.common import utils
 from dashboard.pinpoint.models import change
@@ -23,6 +25,8 @@ from dashboard.pinpoint.models import scheduler
 from dashboard.pinpoint.models import task as task_module
 from dashboard.pinpoint.models.tasks import performance_bisection
 from dashboard.pinpoint.models.tasks import read_value
+if utils.IsRunningFlask():
+  from flask import request
 
 _ERROR_BUG_ID = 'Bug ID must be an integer.'
 _ERROR_TAGS_DICT = 'Tags must be a dict of key/value string pairs.'
@@ -30,7 +34,6 @@ _ERROR_UNSUPPORTED = 'This benchmark (%s) is unsupported.'
 _ERROR_PRIORITY = 'Priority must be an integer.'
 
 REGULAR_TELEMETRY_TESTS = {
-    'performance_weblayer_test_suite',
     'performance_webview_test_suite',
 }
 SUFFIXED_REGULAR_TELEMETRY_TESTS = {
@@ -42,13 +45,13 @@ SUFFIXES = {
     '_android_chrome',
     '_android_monochrome',
     '_android_monochrome_bundle',
-    '_android_weblayer',
     '_android_webview',
     '_android_clank_chrome',
     '_android_clank_monochrome',
     '_android_clank_monochrome_64_32_bundle',
     '_android_clank_monochrome_bundle',
     '_android_clank_trichrome_bundle',
+    '_android_clank_trichrome_chrome_google_64_32_bundle',
     '_android_clank_trichrome_webview',
     '_android_clank_trichrome_webview_bundle',
     '_android_clank_webview',
@@ -61,19 +64,19 @@ for test in SUFFIXED_REGULAR_TELEMETRY_TESTS:
     REGULAR_TELEMETRY_TESTS_WITH_FALLBACKS[test + suffix] = test
 
 
-# pylint: disable=abstract-method
-class New(api_request_handler.ApiRequestHandler):
-  """Handler that cooks up a fresh Pinpoint job."""
+if utils.IsRunningFlask():
 
-  def _CheckUser(self):
-    self._CheckIsLoggedIn()
+  def _CheckUser():
+    if utils.IsDevAppserver():
+      return
+    api_auth.Authorize()
     if not utils.IsTryjobUser():
       raise api_request_handler.ForbiddenError()
 
-  def Post(self, *args, **kwargs):
-    del args, kwargs  # Unused.
+  @api_request_handler.RequestHandlerDecoratorFactory(_CheckUser)
+  def NewHandlerPost():
     # TODO(dberris): Validate the inputs based on the type of job requested.
-    job = _CreateJob(self.request)
+    job = _CreateJob(request)
 
     # We apply the cost-based scheduling at job creation time, so that we can
     # roll out the feature as jobs come along.
@@ -85,11 +88,39 @@ class New(api_request_handler.ApiRequestHandler):
         'jobId': job.job_id,
         'jobUrl': job.url,
     }
+else:
+  class New(api_request_handler.ApiRequestHandler):
+    # pylint: disable=abstract-method
+    """Handler that cooks up a fresh Pinpoint job."""
+
+    def _CheckUser(self):
+      self._CheckIsLoggedIn()
+      if not utils.IsTryjobUser():
+        raise api_request_handler.ForbiddenError()
+
+    def Post(self, *args, **kwargs):
+      del args, kwargs  # Unused.
+      # TODO(dberris): Validate the inputs based on the type of job requested.
+      job = _CreateJob(self.request)
+
+      # We apply the cost-based scheduling at job creation time, so that we can
+      # roll out the feature as jobs come along.
+      scheduler.Schedule(job, scheduler.Cost(job))
+
+      job.PostCreationUpdate()
+
+      return {
+          'jobId': job.job_id,
+          'jobUrl': job.url,
+      }
 
 
-def _CreateJob(request):
+def _CreateJob(req):
   """Creates a new Pinpoint job from WebOb request arguments."""
-  original_arguments = request.params.mixed()
+  if utils.IsRunningFlask():
+    original_arguments = utils.RequestParamsMixed(req)
+  else:
+    original_arguments = req.params.mixed()
   logging.debug('Received Params: %s', original_arguments)
 
   # This call will fail if some of the required arguments are not in the
@@ -121,7 +152,7 @@ def _CreateJob(request):
 
   # If this is a try job, we assume it's higher priority than bisections, so
   # we'll set it at a negative priority.
-  if priority not in arguments and comparison_mode == job_state.TRY:
+  if not priority and comparison_mode == job_state.TRY:
     priority = -1
 
   # TODO(dberris): Make this the default when we've graduated the beta.
@@ -142,24 +173,40 @@ def _CreateJob(request):
       raise ValueError(
           'Missing either "story" or "story_tags" as arguments for try jobs.')
 
+  batch_id = arguments.get('batch_id')
+  if batch_id is None or batch_id == '':
+    batch_id = str(uuid.uuid4())
+
+  initial_attempt_count = arguments.get('initial_attempt_count')
+  try:
+    initial_attempt_count = int(initial_attempt_count)
+  except (TypeError, ValueError):
+    initial_attempt_count = None
+
   # Create job.
-  job = job_module.Job.New(
-      quests if not use_execution_engine else (),
-      changes,
-      arguments=original_arguments,
-      bug_id=bug_id,
-      comparison_mode=comparison_mode,
-      comparison_magnitude=comparison_magnitude,
-      gerrit_server=gerrit_server,
-      gerrit_change_id=gerrit_change_id,
-      name=name,
-      pin=pin,
-      tags=tags,
-      user=user,
-      priority=priority,
-      use_execution_engine=use_execution_engine,
-      project=project,
-      batch_id=arguments.get('batch_id'))
+  try:
+    job = job_module.Job.New(
+        quests if not use_execution_engine else (),
+        changes,
+        arguments=original_arguments,
+        bug_id=bug_id,
+        comparison_mode=comparison_mode,
+        comparison_magnitude=comparison_magnitude,
+        gerrit_server=gerrit_server,
+        gerrit_change_id=gerrit_change_id,
+        name=name,
+        pin=pin,
+        tags=tags,
+        user=user,
+        priority=priority,
+        use_execution_engine=use_execution_engine,
+        project=project,
+        batch_id=batch_id,
+        initial_attempt_count=initial_attempt_count,
+        dimensions=arguments.get('dimensions'),
+        swarming_server=arguments.get('swarming_server'))
+  except errors.SwarmingNoBots as e:
+    six.raise_from(ValueError(str(e)), e)
 
   if use_execution_engine:
     # TODO(dberris): We need to figure out a way to get the arguments to be more
@@ -256,6 +303,8 @@ def _ArgumentsWithConfiguration(original_arguments):
   return new_arguments
 
 
+# TODO(https://crbug.com/1262292): raise directly after Python2 trybots retire.
+# pylint: disable=inconsistent-return-statements
 def _ValidateBugId(bug_id, project):
   if not bug_id:
     return None, None
@@ -270,6 +319,8 @@ def _ValidateBugId(bug_id, project):
     six.raise_from(ValueError(_ERROR_BUG_ID), e)
 
 
+# TODO(https://crbug.com/1262292): raise directly after Python2 trybots retire.
+# pylint: disable=inconsistent-return-statements
 def _ValidatePriority(priority):
   if not priority:
     return None
@@ -341,6 +392,8 @@ def _ValidateChangesForTry(arguments):
   return change_1, change_2
 
 
+# TODO(https://crbug.com/1262292): raise directly after Python2 trybots retire.
+# pylint: disable=inconsistent-return-statements
 def _ValidateChanges(comparison_mode, arguments):
   try:
     changes = arguments.get('changes')
@@ -448,7 +501,8 @@ def _GenerateQuests(arguments):
         arguments['fallback_target'] = fallback_target
       quest_classes = (quest_module.FindIsolate, quest_module.RunTelemetryTest,
                        quest_module.ReadValue)
-    elif 'performance_test_suite_eve' in target:
+    elif ('performance_test_suite_eve' in target
+          or 'performance_test_suite_octopus' in target):
       quest_classes = (quest_module.FindIsolate,
                        quest_module.RunLacrosTelemetryTest,
                        quest_module.ReadValue)

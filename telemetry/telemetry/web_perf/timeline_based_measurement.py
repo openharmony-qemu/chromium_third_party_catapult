@@ -23,7 +23,7 @@ ALL_OVERHEAD_LEVELS = [
 ]
 
 
-class Options(object):
+class Options():
   """A class to be used to configure TimelineBasedMeasurement.
 
   This is created and returned by
@@ -158,8 +158,6 @@ class TimelineBasedMeasurement(story_test.StoryTest):
     tbm_metrics = (
         self._tbm_options.GetTimelineBasedMetrics() +
         results.current_story.GetExtraTracingMetrics())
-    assert tbm_metrics, (
-        'Please specify required metrics using SetTimelineBasedMetrics')
     results.AddTraces(traces, tbm_metrics=tbm_metrics)
     traces.CleanUpTraceData()
 

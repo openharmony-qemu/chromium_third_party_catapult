@@ -250,55 +250,6 @@ class WebViewBundleBackendSettings(WebViewBackendSettings):
     return all_apks
 
 
-class WebLayerBackendSettings(WebViewBackendSettings):
-  def __new__(cls, **kwargs):
-    # Provide some defaults for backends that work via weblayer_shell,
-    # a testing app with source code available at:
-    # https://cs.chromium.org/chromium/src/weblayer/shell
-    kwargs.setdefault('devtools_port',
-                      'localabstract:weblayer_devtools_remote_{pid}')
-    kwargs.setdefault('package', 'org.chromium.weblayer.shell')
-    kwargs.setdefault('activity',
-                      'org.chromium.weblayer.shell.TelemetryActivity')
-    kwargs.setdefault('embedder_apk_name', 'WebLayerShellSystemWebView.apk')
-    kwargs.setdefault('command_line_name', 'weblayer-command-line')
-    kwargs.setdefault('supports_spki_list', True)
-    return super(WebLayerBackendSettings, cls).__new__(cls, **kwargs)
-
-  def GetApkName(self, device):
-    del device # Unused
-    assert self.apk_name is None
-    return 'Monochrome.apk'
-
-  def IsWebView(self):
-    return False
-
-class WebLayerBundleBackendSettings(WebLayerBackendSettings):
-  def GetApkName(self, device):
-    assert self.apk_name.endswith('_bundle')
-    del device  # unused
-    # Bundles are created using the generated tool in the output directory's
-    # bin directory instead of being output to the apk directory at compile
-    # time like a normal APK.
-    return os.path.join('..', 'bin', self.apk_name)
-
-  def FindSupportApks(self, apk_path, chrome_root):
-    del chrome_root
-    # Try to find the WebLayer embedder in apk directory.
-    all_apks = []
-    if apk_path is not None:
-      embedder_apk_path = os.path.join(
-          os.path.dirname(apk_path), '..', 'apks', self.embedder_apk_name)
-      if os.path.exists(embedder_apk_path):
-        all_apks.append(embedder_apk_path)
-      if self.additional_apk_name is not None:
-        additional_apk_path = os.path.join(
-            os.path.dirname(apk_path), '..', 'apks', self.additional_apk_name)
-        if os.path.exists(additional_apk_path):
-          all_apks.append(additional_apk_path)
-    return all_apks
-
-
 ANDROID_CONTENT_SHELL = AndroidBrowserBackendSettings(
     browser_type='android-content-shell',
     package='org.chromium.content_shell_apk',
@@ -310,22 +261,6 @@ ANDROID_CONTENT_SHELL = AndroidBrowserBackendSettings(
     supports_tab_control=False,
     supports_spki_list=True,
     additional_apk_name=None)
-
-ANDROID_WEBLAYER = WebLayerBackendSettings(
-    browser_type='android-weblayer')
-
-ANDROID_WEBLAYER_GOOGLE_BUNDLE = WebLayerBundleBackendSettings(
-    browser_type='android-weblayer-google-bundle',
-    apk_name='monochrome_bundle')
-
-ANDROID_WEBLAYER_STANDALONE_GOOGLE_BUNDLE = WebLayerBundleBackendSettings(
-    browser_type='android-weblayer-standalone-google-bundle',
-    apk_name='system_webview_google_bundle')
-
-ANDROID_WEBLAYER_TRICHROME_GOOGLE_BUNDLE = WebLayerBundleBackendSettings(
-    apk_name='trichrome_webview_google_bundle',
-    additional_apk_name='TrichromeLibraryGoogle.apk',
-    browser_type='android-weblayer-trichrome-google-bundle')
 
 ANDROID_WEBVIEW = WebViewBackendSettings(
     browser_type='android-webview')
@@ -404,6 +339,54 @@ ANDROID_CHROMIUM_MONOCHROME = GenericChromeBackendSettings(
     apk_name='MonochromePublic.apk'
 )
 
+ANDROID_CHROMIUM_BETA = GenericChromeBackendSettings(
+    browser_type='android-chromium.beta',
+    package='org.chromium.chrome.beta',
+    apk_name='ChromePublic.apk')
+
+ANDROID_CHROMIUM_BUNDLE_BETA = GenericChromeBundleBackendSettings(
+    browser_type='android-chromium-bundle.beta',
+    package='org.chromium.chrome.beta',
+    apk_name='chrome_modern_public_bundle')
+
+ANDROID_CHROMIUM_MONOCHROME_BETA = GenericChromeBackendSettings(
+    browser_type='android-chromium-monochrome.beta',
+    package='org.chromium.chrome.beta',
+    apk_name='MonochromePublic.apk'
+)
+
+ANDROID_CHROMIUM_CANARY = GenericChromeBackendSettings(
+    browser_type='android-chromium.canary',
+    package='org.chromium.chrome.canary',
+    apk_name='ChromePublic.apk')
+
+ANDROID_CHROMIUM_BUNDLE_CANARY = GenericChromeBundleBackendSettings(
+    browser_type='android-chromium-bundle.canary',
+    package='org.chromium.chrome.canary',
+    apk_name='chrome_modern_public_bundle')
+
+ANDROID_CHROMIUM_MONOCHROME_CANARY = GenericChromeBackendSettings(
+    browser_type='android-chromium-monochrome.canary',
+    package='org.chromium.chrome.canary',
+    apk_name='MonochromePublic.apk'
+)
+
+ANDROID_CHROMIUM_DEV = GenericChromeBackendSettings(
+    browser_type='android-chromium.dev',
+    package='org.chromium.chrome.dev',
+    apk_name='ChromePublic.apk')
+
+ANDROID_CHROMIUM_BUNDLE_DEV = GenericChromeBundleBackendSettings(
+    browser_type='android-chromium-bundle.dev',
+    package='org.chromium.chrome.dev',
+    apk_name='chrome_modern_public_bundle')
+
+ANDROID_CHROMIUM_MONOCHROME_DEV = GenericChromeBackendSettings(
+    browser_type='android-chromium-monochrome.dev',
+    package='org.chromium.chrome.dev',
+    apk_name='MonochromePublic.apk'
+)
+
 ANDROID_CHROME = ChromeBackendSettings(
     browser_type='android-chrome',
     package='com.google.android.apps.chrome')
@@ -418,6 +401,12 @@ ANDROID_TRICHROME_BUNDLE = GenericChromeBundleBackendSettings(
     package='com.google.android.apps.chrome',
     apk_name='trichrome_chrome_google_bundle',
     additional_apk_name='TrichromeLibraryGoogle.apk')
+
+ANDROID_TRICHROME_CHROME_GOOGLE_64_32_BUNDLE = GenericChromeBundleBackendSettings(
+    browser_type='android-trichrome-chrome-google-64-32-bundle',
+    package='com.google.android.apps.chrome',
+    apk_name='trichrome_chrome_google_64_32_bundle',
+    additional_apk_name='TrichromeLibraryGoogle6432.apk')
 
 ANDROID_CHROME_64_BUNDLE = GenericChromeBundleBackendSettings(
     browser_type='android-chrome-64-bundle',
@@ -443,10 +432,6 @@ ANDROID_SYSTEM_CHROME = GenericChromeBackendSettings(
 
 ANDROID_BACKEND_SETTINGS = (
     ANDROID_CONTENT_SHELL,
-    ANDROID_WEBLAYER,
-    ANDROID_WEBLAYER_GOOGLE_BUNDLE,
-    ANDROID_WEBLAYER_STANDALONE_GOOGLE_BUNDLE,
-    ANDROID_WEBLAYER_TRICHROME_GOOGLE_BUNDLE,
     ANDROID_WEBVIEW,
     ANDROID_WEBVIEW_BUNDLE,
     ANDROID_WEBVIEW_GOOGLE,
@@ -464,10 +449,20 @@ ANDROID_BACKEND_SETTINGS = (
     ANDROID_CHROMIUM,
     ANDROID_CHROMIUM_BUNDLE,
     ANDROID_CHROMIUM_MONOCHROME,
+    ANDROID_CHROMIUM_BETA,
+    ANDROID_CHROMIUM_BUNDLE_BETA,
+    ANDROID_CHROMIUM_MONOCHROME_BETA,
+    ANDROID_CHROMIUM_CANARY,
+    ANDROID_CHROMIUM_BUNDLE_CANARY,
+    ANDROID_CHROMIUM_MONOCHROME_CANARY,
+    ANDROID_CHROMIUM_DEV,
+    ANDROID_CHROMIUM_BUNDLE_DEV,
+    ANDROID_CHROMIUM_MONOCHROME_DEV,
     ANDROID_CHROME,
     ANDROID_CHROME_64_BUNDLE,
     ANDROID_CHROME_BUNDLE,
     ANDROID_TRICHROME_BUNDLE,
+    ANDROID_TRICHROME_CHROME_GOOGLE_64_32_BUNDLE,
     ANDROID_CHROME_BETA,
     ANDROID_CHROME_DEV,
     ANDROID_CHROME_CANARY,

@@ -31,7 +31,7 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
 
   def __init__(self, android_platform_backend, finder_options,
                browser_directory, profile_directory, backend_settings,
-               build_dir=None):
+               build_dir=None, local_apk_path=None):
     """
     Args:
       android_platform_backend: The
@@ -48,10 +48,12 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
           the browser was built in, for finding debug artifacts. Can be None if
           the browser was not locally built, or the directory otherwise cannot
           be determined.
+      local_apk_path: A string containing a path to the APK for the browser. Can
+          be None if the browser was not locally built.
     """
     assert isinstance(android_platform_backend,
                       android_platform_backend_module.AndroidPlatformBackend)
-    super(AndroidBrowserBackend, self).__init__(
+    super().__init__(
         android_platform_backend,
         browser_options=finder_options.browser_options,
         browser_directory=browser_directory,
@@ -66,6 +68,7 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
     self._app_ui = None
     self._browser_package = None
     self._finder_options = finder_options
+    self._local_apk_path = local_apk_path
 
     # Set the debug app if needed.
     self.platform_backend.SetDebugApp(self.browser_package)
@@ -113,7 +116,7 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
       raise
 
   def BindDevToolsClient(self):
-    super(AndroidBrowserBackend, self).BindDevToolsClient()
+    super().BindDevToolsClient()
     package = self.devtools_client.GetVersion().get('Android-Package')
     if package is None:
       logging.warning('Could not determine package name from DevTools client.')
@@ -144,10 +147,10 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
     # fixed, remove this workaround and just switch blocking above to True.
     try:
       app_ui.AppUi(self.device).WaitForUiNode(package=package)
-    except Exception:
+    except Exception as e:
       raise exceptions.BrowserGoneException(
           self.browser,
-          'Timed out waiting for browser to come back foreground.')
+          'Timed out waiting for browser to come back foreground.') from e
 
   def Background(self):
     package = 'org.chromium.push_apps_to_background'
@@ -214,7 +217,7 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
   def Close(self):
     if os.getenv('CHROME_PGO_PROFILING'):
       self.devtools_client.DumpProfilingDataOfAllProcesses(timeout=120)
-    super(AndroidBrowserBackend, self).Close()
+    super().Close()
     self._StopBrowser()
     if self._tmp_minidump_dir:
       shutil.rmtree(self._tmp_minidump_dir, ignore_errors=True)
@@ -252,19 +255,23 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
     # adb issues), we're more likely to end up with useful debug information.
     suffix = artifact_logger.GetTimestampSuffix()
     self._StoreLogcatAsArtifact(suffix)
-    retval = super(AndroidBrowserBackend, self).CollectDebugData(log_level)
+    retval = super().CollectDebugData(log_level)
     self._StoreUiDumpAsArtifact(suffix)
     self._StoreTombstonesAsArtifact(suffix)
     return retval
 
   def SymbolizeMinidump(self, minidump_path):
     dump_symbolizer = android_minidump_symbolizer.AndroidMinidumpSymbolizer(
-        self._dump_finder, self.build_dir)
+        self._dump_finder, self.build_dir,
+        symbols_dir=self._CreateExecutableUniqueDirectory('chrome_symbols_'))
     stack = dump_symbolizer.SymbolizeMinidump(minidump_path)
     if not stack:
       return (False, 'Failed to symbolize minidump.')
     self._symbolized_minidump_paths.add(minidump_path)
     return (True, stack)
+
+  def _GetBrowserExecutablePath(self):
+    return self._local_apk_path
 
   def _PullMinidumpsAndAdjustMtimes(self):
     """Pulls any minidumps from the device to the host.
@@ -331,7 +338,9 @@ class AndroidBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
       logging.exception('Failed to store UI dump')
 
   def _StoreLogcatAsArtifact(self, suffix):
-    logcat = self.platform_backend.GetLogCat()
+    # Get more lines than the default since this is likely to be run after a
+    # failure, so this gives us a better chance of getting useful debug info.
+    logcat = self.platform_backend.GetLogCat(number_of_lines=3000)
     artifact_name = posixpath.join(
         self.DEBUG_ARTIFACT_PREFIX, 'logcat-%s.txt' % suffix)
     artifact_logger.CreateArtifact(artifact_name, logcat)

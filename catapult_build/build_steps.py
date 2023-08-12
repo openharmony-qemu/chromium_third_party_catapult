@@ -17,6 +17,8 @@ import sys
 #   environment.
 # disabled (optional): List of platforms the test is disabled on. May contain
 #   'win', 'mac', 'linux', or 'android'.
+# python_versions (optional): A list of ints specifying the Python versions to
+#   run on. May contain "2" or "3". Defaults to running on both.
 # outputs_presentation_json (optional): If True, pass in --presentation-json
 #   argument to the test executable to allow it to update the buildbot status
 #   page. More details here:
@@ -95,6 +97,7 @@ _CATAPULT_TESTS = [
         'additional_args': ['--browser=reference',],
         'uses_sandbox_env': True,
         'disabled': ['android'],
+        'python_versions': [3],
     },
     {
         'name': 'Telemetry Tests with Stable Browser (Desktop)',
@@ -106,6 +109,7 @@ _CATAPULT_TESTS = [
         ],
         'uses_sandbox_env': True,
         'disabled': ['android'],
+        'python_versions': [3],
     },
     {
         'name': 'Telemetry Tests with Stable Browser (Android)',
@@ -117,7 +121,8 @@ _CATAPULT_TESTS = [
             '-v',
         ],
         'uses_sandbox_env': True,
-        'disabled': ['win', 'mac', 'linux']
+        'disabled': ['win', 'mac', 'linux'],
+        'python_versions': [3],
     },
     {
         'name': 'Telemetry Integration Tests with Stable Browser',
@@ -129,6 +134,7 @@ _CATAPULT_TESTS = [
         ],
         'uses_sandbox_env': True,
         'disabled': ['android', 'linux'],  # TODO(nedn): enable this on linux
+        'python_versions': [3],
     },
     {
         'name': 'Tracing Dev Server Tests',
@@ -203,6 +209,7 @@ def main(args=None):
       '--app-engine-sdk-pythonpath',
       help='PYTHONPATH to include app engine SDK path')
   parser.add_argument('--platform', help='Platform name (linux, mac, or win)')
+  parser.add_argument('--platform_arch', help='Platform arch (intel or arm)')
   parser.add_argument('--output-json', help='Output for buildbot status page')
   parser.add_argument(
       '--run_android_tests', default=True, help='Run Android tests')
@@ -218,23 +225,26 @@ def main(args=None):
       action='store_true')
   args = parser.parse_args(args)
 
-  dashboard_protos_path = os.path.join(args.api_path_checkout, 'dashboard',
+  dashboard_protos_folder = os.path.join(args.api_path_checkout, 'dashboard',
                                        'dashboard', 'proto')
   dashboard_proto_files = [
-      os.path.join(dashboard_protos_path, p)
+      os.path.join(dashboard_protos_folder, p)
       for p in ['sheriff.proto', 'sheriff_config.proto']
   ]
+
+  dashboard_protos_path = os.path.join(args.api_path_checkout, 'dashboard')
 
   sheriff_proto_output_path = os.path.join(args.api_path_checkout, 'dashboard',
                                            'dashboard', 'sheriff_config')
   dashboard_proto_output_path = os.path.join(args.api_path_checkout,
-                                             'dashboard', 'dashboard')
+                                             'dashboard')
 
   tracing_protos_path = os.path.join(args.api_path_checkout, 'tracing',
                                      'tracing', 'proto')
   tracing_proto_output_path = tracing_protos_path
   tracing_proto_files = [os.path.join(tracing_protos_path, 'histogram.proto')]
 
+  protoc_path = 'protoc'
 
   steps = [
       {
@@ -257,7 +267,7 @@ def main(args=None):
           'name':
               'Generate Sheriff Config protocol buffers',
           'cmd': [
-              'protoc',
+              protoc_path,
               '--proto_path',
               dashboard_protos_path,
               '--python_out',
@@ -268,7 +278,7 @@ def main(args=None):
           'name':
               'Generate Dashboard protocol buffers',
           'cmd': [
-              'protoc',
+              protoc_path,
               '--proto_path',
               dashboard_protos_path,
               '--python_out',
@@ -279,7 +289,7 @@ def main(args=None):
           'name':
               'Generate Tracing protocol buffers',
           'cmd': [
-              'protoc',
+              protoc_path,
               '--proto_path',
               tracing_protos_path,
               '--python_out',
@@ -336,6 +346,10 @@ def main(args=None):
     if args.platform in test.get('disabled', []):
       continue
 
+    python_version = 3 if args.use_python3 else 2
+    if python_version not in test.get('python_versions', [2, 3]):
+      continue
+
     # The test "Devil Python Tests" has two executables, run_py_tests and
     # run_py3_tests. Those scripts define the vpython interpreter on shebang,
     # and will quit when running on unexpected version. This script assumes one
@@ -379,6 +393,7 @@ def main(args=None):
     if args.use_python3:
       step['always_run'] = True
     steps.append(step)
+
   with open(args.output_json, 'w') as outfile:
     json.dump(steps, outfile)
 

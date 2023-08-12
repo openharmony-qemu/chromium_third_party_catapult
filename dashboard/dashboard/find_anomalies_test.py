@@ -71,26 +71,26 @@ _TEST_ROW_DATA = [
     (241529, 2143.5),
     (241532, 2145.5),
     (241535, 2147.0),
-    (241537, 2184.1),
-    (241546, 2180.8),
-    (241553, 2181.5),
-    (241559, 2176.8),
-    (241566, 2174.0),
-    (241577, 2182.8),
-    (241579, 2184.8),
-    (241582, 2190.5),
-    (241584, 2183.1),
-    (241609, 2178.3),
-    (241620, 2178.1),
-    (241645, 2190.8),
-    (241653, 2177.7),
-    (241666, 2185.3),
-    (241697, 2173.8),
-    (241716, 2172.1),
-    (241735, 2172.5),
-    (241757, 2174.7),
-    (241766, 2196.7),
-    (241782, 2184.1),
+    (241537, 2484.1),
+    (241546, 2480.8),
+    (241553, 2481.5),
+    (241559, 2476.8),
+    (241566, 2474.0),
+    (241577, 2482.8),
+    (241579, 2484.8),
+    (241582, 2490.5),
+    (241584, 2483.1),
+    (241609, 2478.3),
+    (241620, 2478.1),
+    (241645, 2490.8),
+    (241653, 2477.7),
+    (241666, 2485.3),
+    (241697, 2473.8),
+    (241716, 2472.1),
+    (241735, 2472.5),
+    (241757, 2474.7),
+    (241766, 2496.7),
+    (241782, 2484.1),
 ]
 
 
@@ -116,6 +116,8 @@ def _MakeSampleChangePoint(x_value, median_before, median_after):
   )
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class EndRevisionMatcher(object):
   """Custom matcher to test if an anomaly matches a given end rev."""
 
@@ -135,6 +137,8 @@ class EndRevisionMatcher(object):
     return hash(self._end_revision)
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class ModelMatcher(object):
   """Custom matcher to check if two ndb entity names match."""
 
@@ -164,6 +168,8 @@ def _MockTasklet(*_):
 class ProcessAlertsTest(testing_common.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(ProcessAlertsTest, self).setUp()
     self.SetCurrentUser('foo@bar.com', is_admin=True)
 

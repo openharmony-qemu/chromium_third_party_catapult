@@ -19,7 +19,10 @@ from google.appengine.ext import deferred
 from google.appengine.ext import ndb
 from google.appengine.runtime import apiproxy_errors
 
+from dashboard.common import datastore_hooks
 from dashboard.common import utils
+from dashboard.models import anomaly
+from dashboard.models import graph_data
 from dashboard.pinpoint.models import change as change_module
 from dashboard.pinpoint.models import errors
 from dashboard.pinpoint.models import evaluators
@@ -34,6 +37,8 @@ from dashboard.pinpoint.models.evaluators import job_serializer
 from dashboard.pinpoint.models.tasks import evaluator as task_evaluator
 from dashboard.services import gerrit_service
 from dashboard.services import issue_tracker_service
+from dashboard.services import swarming
+
 
 # We want this to be fast to minimize overhead while waiting for tasks to
 # finish, but don't want to consume too many resources.
@@ -165,6 +170,29 @@ def IsRunning(job):
   return job.started and not job.completed
 
 
+
+def GetIterationCount(initial_attempt_count, bot_count):
+  # We want to run at least initial_attempt_count iterations.
+  # In addition, attempts should be evenly distributed between all bots.
+  # bot_count will never be 0 (we'll exception out if that happens).
+
+  # Bisections determine attempt count elsewhere.
+  if initial_attempt_count is None:
+    return initial_attempt_count
+
+  # initial_attempt_count should always be even
+  if initial_attempt_count % 2:
+    initial_attempt_count += 1
+
+  if bot_count >= initial_attempt_count:
+    return initial_attempt_count
+
+  repeats = initial_attempt_count // bot_count
+  if repeats * bot_count < initial_attempt_count:
+    repeats += 1
+  return repeats * bot_count
+
+
 class Job(ndb.Model):
   """A Pinpoint job."""
 
@@ -244,6 +272,9 @@ class Job(ndb.Model):
   # Jobs can be part of batches, which have an id provided by the creator.
   batch_id = ndb.StringProperty()
 
+  # Bots we can use to run tests
+  bots = ndb.StringProperty(repeated=True)
+
   @classmethod
   def _post_get_hook(cls, key, future):  # pylint: disable=unused-argument
     e = future.get_result()
@@ -283,8 +314,11 @@ class Job(ndb.Model):
           priority=None,
           use_execution_engine=False,
           project='chromium',
-          batch_id=None):
-    """Creates a new Job, adds Changes to it, and puts it in the Datstore.
+          batch_id=None,
+          initial_attempt_count=10,
+          dimensions=None,
+          swarming_server=None):
+    """Creates a new Job, adds Changes to it, and puts it in the Datastore.
 
     Args:
       quests: An iterable of Quests for the Job to run.
@@ -293,7 +327,7 @@ class Job(ndb.Model):
       bug_id: A monorail issue id number to post Job updates to.
       comparison_mode: Either 'functional' or 'performance', which the Job uses
         to figure out whether to perform a functional or performance bisect. If
-        None, the Job will not automatically add any Attempts or Changes.
+        None, then the Job will not automatically add any Attempts or Changes.
       comparison_magnitude: The estimated size of the regression or improvement
         to look for. Smaller magnitudes require more repeats.
       gerrit_server: Server of the Gerrit code review to update with job
@@ -314,11 +348,21 @@ class Job(ndb.Model):
     Returns:
       A Job object.
     """
+    bots = swarming.GetAliveBotsByDimensions(dimensions, swarming_server)
+    if not bots:
+      raise errors.SwarmingNoBots()
+
+    # For A/B ordering to be equal, we need an even number of bots (or one)
+    if len(bots) % 2 and len(bots) != 1:
+      bots.pop()
+
     state = job_state.JobState(
         quests,
         comparison_mode=comparison_mode,
         comparison_magnitude=comparison_magnitude,
-        pin=pin)
+        pin=pin,
+        initial_attempt_count=GetIterationCount(initial_attempt_count,
+                                                len(bots)))
     args = arguments or {}
     job = cls(
         state=state,
@@ -336,7 +380,7 @@ class Job(ndb.Model):
         priority=priority,
         project=project,
         batch_id=batch_id,
-    )
+        bots=bots)
 
     # Pull out the benchmark arguments to the top-level.
     job.benchmark_arguments = BenchmarkArguments.FromArgs(args)
@@ -403,7 +447,18 @@ class Job(ndb.Model):
     host = os.environ['HTTP_HOST']
     # TODO(crbug.com/939723): Remove this workaround when not needed.
     if host == 'pinpoint.chromeperf.appspot.com':
+      logging.info('Workaround branch for crbug/939723')
       host = 'pinpoint-dot-chromeperf.appspot.com'
+    if host == 'pinpoint.chromeperf-stage.uc.r.appspot.com':
+      logging.info('Workaround branch for crbug/939723 (staging)')
+      host = 'pinpoint-dot-chromeperf-stage.uc.r.appspot.com'
+    # TODO(crbug.com/1338045): Remove this when 1338045 is properly fixed.
+    if host == 'chromeperf.appspot.com':
+      logging.info('Workaround branch for crbug/1338045')
+      host = 'pinpoint-dot-chromeperf.appspot.com'
+    if host == 'chromeperf-stage.uc.r.appspot.com':
+      logging.info('Workaround branch for crbug/1338045 (staging)')
+      host = 'pinpoint-dot-chromeperf-stage.uc.r.appspot.com'
     return 'https://%s/job/%s' % (host, self.job_id)
 
   @property
@@ -414,6 +469,10 @@ class Job(ndb.Model):
         return url
     # Point to the default status page if no results are available.
     return '/results2/%s' % self.job_id
+
+  @property
+  def improvement_direction(self):
+    return self._GetImprovementDirection()
 
   @property
   def auto_name(self):
@@ -450,7 +509,7 @@ class Job(ndb.Model):
         task_module.Evaluate(
             self,
             event_module.Event(type='initiate', target_task=None, payload={}),
-            task_evaluator.ExecutionEngine(self)),
+            task_evaluator.ExecutionEngine(self))
       except task_module.Error as error:
         logging.error('Failed: %s', error)
         self.Fail()
@@ -499,6 +558,14 @@ class Job(ndb.Model):
     self._FormatAndPostBugCommentOnComplete()
     self._UpdateGerritIfNeeded()
     scheduler.Complete(self)
+
+  def _GetImprovementDirection(self):
+    if self.tags is not None and "test_path" in self.tags:
+      datastore_hooks.SetSinglePrivilegedRequest()
+      t = graph_data.TestMetadata.get_by_id(self.tags["test_path"])
+      if t is not None:
+        return t.improvement_direction
+    return anomaly.UNKNOWN
 
   def _FormatAndPostBugCommentOnComplete(self):
     logging.debug('Processing outputs.')
@@ -584,6 +651,7 @@ class Job(ndb.Model):
       values_b = result_values[change_b]
       bug_update_builder.AddDifference(change_b, values_a, values_b)
 
+    improvement_dir = self._GetImprovementDirection()
     deferred.defer(
         job_bug_update.UpdatePostAndMergeDeferred,
         bug_update_builder,
@@ -591,6 +659,7 @@ class Job(ndb.Model):
         self.tags,
         self.url,
         self.project,
+        improvement_dir,
         _retry_options=RETRY_OPTIONS)
 
   def _UpdateGerritIfNeeded(self, success=True):
@@ -634,7 +703,7 @@ class Job(ndb.Model):
           exception.category = 'pinpoint'
         else:
           exception = exc_info[1]
-      exc_message = exception.message
+      exc_message = str(exception)
       category = None
       if isinstance(exception, errors.JobError):
         category = exception.category
@@ -668,6 +737,7 @@ class Job(ndb.Model):
     # we don't need to worry about duplicate tasks.
     # https://github.com/catapult-project/catapult/issues/3900
     task_name = str(uuid.uuid4())
+    logging.info('JobQueueDebug: Adding jobrun. ID: %s', self.job_id)
     try:
       task = taskqueue.add(
           queue_name='job-queue',
@@ -706,6 +776,7 @@ class Job(ndb.Model):
     self.exception_details = None  # In case the Job succeeds on retry.
     self.task = None  # In case an exception is thrown.
 
+    logging.info('JobQueueDebug: Starting jobrun. ID: %s', self.job_id)
     try:
       if scheduler.IsStopped(self):
         # When a user manually cancels a Pinpoint job, job.Cancel() is
@@ -733,6 +804,7 @@ class Job(ndb.Model):
         self._Complete()
         return
 
+      logging.info('JobQueueDebug: Scheduling jobrun. ID: %s', self.job_id)
       if not self._IsTryJob():
         self.state.Explore()
       work_left = self.state.ScheduleWork()
@@ -742,6 +814,8 @@ class Job(ndb.Model):
         self._Schedule()
       else:
         self._Complete()
+
+      logging.info('JobQueueDebug: Scheduled jobrun. ID: %s', self.job_id)
 
       self.retry_count = 0
     except errors.RecoverableError as e:
@@ -754,6 +828,7 @@ class Job(ndb.Model):
       self.Fail()
       raise
     finally:
+      logging.info('JobQueueDebug: Finishing jobrun. ID: %s', self.job_id)
       # Don't use `auto_now` for `updated`. When we do data migration, we need
       # to be able to modify the Job without changing the Job's completion time.
       self.updated = datetime.datetime.now()
@@ -781,6 +856,7 @@ class Job(ndb.Model):
         job.updated = datetime.datetime.now()
         job.put()
         raise
+      logging.info('JobQueueDebug: Done jobrun. ID: %s', self.job_id)
 
   def AsDict(self, options=None):
     def IsoFormatOrNone(attr):
@@ -793,6 +869,7 @@ class Job(ndb.Model):
         'job_id': self.job_id,
         'configuration': self.configuration,
         'results_url': self.results_url,
+        'improvement_direction': self.improvement_direction,
         'arguments': self.arguments,
         'bug_id': self.bug_id,
         'project': self.project,
@@ -807,6 +884,7 @@ class Job(ndb.Model):
         'status': self.status,
         'cancel_reason': self.cancel_reason,
         'batch_id': self.batch_id,
+        'bots': self.bots
     }
 
     if not options:

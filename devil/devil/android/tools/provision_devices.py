@@ -489,14 +489,13 @@ def SetDate(device):
         single_line=True).replace('"', '')
     device_time = datetime.datetime.strptime(device_time, "%Y%m%d.%H%M%S")
     correct_time = datetime.datetime.strptime(strgmtime, date_format)
-    tdelta = (correct_time - device_time).seconds
+    tdelta = abs(correct_time - device_time).seconds
     if tdelta <= 1:
       logger.info('Date/time successfully set on %s', device)
       return True
-    else:
-      logger.error('Date mismatch. Device: %s Correct: %s',
-                   device_time.isoformat(), correct_time.isoformat())
-      return False
+    logger.error('Date mismatch. Device: %s Correct: %s',
+                 device_time.isoformat(), correct_time.isoformat())
+    return False
 
   # Sometimes the date is not set correctly on the devices. Retry on failure.
   if device.IsUserBuild():

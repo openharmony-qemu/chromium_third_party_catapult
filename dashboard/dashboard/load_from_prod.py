@@ -11,6 +11,7 @@ from __future__ import absolute_import
 
 import base64
 import json
+import logging
 import os
 import six.moves.urllib.request
 import six.moves.urllib.parse
@@ -24,6 +25,7 @@ from google.appengine.ext.ndb import model
 from dashboard import update_test_suites
 from dashboard.common import datastore_hooks
 from dashboard.common import request_handler
+from dashboard.common import utils
 
 _DEV_APP_ID = 'dev~' + app_identity.get_application_id()
 
@@ -34,6 +36,7 @@ class LoadFromProdHandler(request_handler.RequestHandler):
   """Debugging handler to load data from the production instance."""
 
   def get(self):
+    utils.LogObsoleteHandlerUsage(self, 'GET')
     if 'Development' not in os.environ['SERVER_SOFTWARE']:
       self.RenderHtml('result.html', {
           'errors':
@@ -44,6 +47,7 @@ class LoadFromProdHandler(request_handler.RequestHandler):
 
   def post(self):
     """Loads the requested data from the production server."""
+    utils.LogObsoleteHandlerUsage(self, 'POST')
     if 'Development' not in os.environ['SERVER_SOFTWARE']:
       self.RenderHtml('result.html', {
           'errors':
@@ -104,6 +108,9 @@ class LoadFromProdHandler(request_handler.RequestHandler):
           ref = val.mutable_referencevalue()
           ref.set_app(_DEV_APP_ID)
       entity = ndb.ModelAdapter().pb_to_entity(pb)
+      if entity.key is None:
+        logging.warning('Entity without key: %s', entity)
+        continue
       entities[entity.key.kind()].append(entity)
 
     for kind in kinds:

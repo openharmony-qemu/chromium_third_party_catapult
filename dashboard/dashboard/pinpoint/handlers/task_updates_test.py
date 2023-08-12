@@ -47,7 +47,7 @@ def CreateBuildUpdate(job, commit_id):
                                       (commit_id,)
                               }
                           })
-                  }))
+                  }).encode('utf-8')).decode('utf-8')
       }
   })
 
@@ -74,11 +74,13 @@ def CreateTestUpdate(job, commit_id, attempt):
                                       (commit_id, attempt)
                               }
                           })
-                  }))
+                  }).encode('utf-8')).decode('utf-8')
       }
   })
 
 
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=["a"]))
 @mock.patch('dashboard.common.utils.ServiceAccountHttp', mock.MagicMock())
 @mock.patch('dashboard.services.buildbucket_service.Put')
 @mock.patch('dashboard.services.buildbucket_service.GetJobStatus')
@@ -86,6 +88,8 @@ class ExecutionEngineTaskUpdatesTest(bisection_test_util.BisectionTestBase):
 
   def setUp(self):
     self.maxDiff = None
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(ExecutionEngineTaskUpdatesTest, self).setUp()
 
   def testHandlerGoodCase(self, buildbucket_getjobstatus, buildbucket_put):
@@ -134,11 +138,13 @@ class ExecutionEngineTaskUpdatesTest(bisection_test_util.BisectionTestBase):
                                         'type': 'build',
                                     }
                                 }),
-                        }))
+                        }).encode('utf-8')).decode('utf-8')
             }
         }))
 
   def testPostInvalidData(self, *_):
+    # TODO(https://crbug.com/1262295): Update this after Python2 trybots retire.
+    # pylint: disable=deprecated-method
     with self.assertRaisesRegexp(ValueError, 'Failed decoding `data`'):
       task_updates.HandleTaskUpdate(
           json.dumps({
@@ -149,6 +155,9 @@ class ExecutionEngineTaskUpdatesTest(bisection_test_util.BisectionTestBase):
                   'data': '{"not": "base64-encoded"}',
               },
           }))
+
+    # TODO(https://crbug.com/1262295): Update this after Python2 trybots retire.
+    # pylint: disable=deprecated-method
     with self.assertRaisesRegexp(ValueError, 'Failed JSON parsing `data`'):
       task_updates.HandleTaskUpdate(
           json.dumps({
@@ -156,7 +165,9 @@ class ExecutionEngineTaskUpdatesTest(bisection_test_util.BisectionTestBase):
                   'attributes': {
                       'nothing': 'important'
                   },
-                  'data': base64.urlsafe_b64encode('not json formatted'),
+                  'data':
+                      base64.urlsafe_b64encode(b'not json formatted').decode(
+                          'utf-8'),
               },
           }))
 

@@ -9,18 +9,23 @@ from __future__ import absolute_import
 import datetime
 import mock
 import sys
+import unittest
 
 from tracing.value.diagnostics import generic_set
 from tracing.value.diagnostics import reserved_infos
 
+from dashboard.common import testing_common
 from dashboard.common import layered_cache
 from dashboard.common import utils
 from dashboard.models import histogram
+from dashboard.models import anomaly
+from dashboard.models import graph_data
 from dashboard.pinpoint.models import change
 from dashboard.pinpoint.models import errors
 from dashboard.pinpoint.models import job
 from dashboard.pinpoint.models import scheduler
 from dashboard.pinpoint import test
+from six.moves import zip # pylint: disable=redefined-builtin
 
 # This is a very long file.
 # pylint: disable=too-many-lines
@@ -83,6 +88,8 @@ def FakeCommitAsDict(commit_self):
 
 @mock.patch.object(job.results2, 'GetCachedResults2',
                    mock.MagicMock(return_value='http://foo'))
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=["a"]))
 class JobTest(test.TestCase):
 
   @mock.patch.object(
@@ -121,10 +128,27 @@ class JobTest(test.TestCase):
     self.assertFalse('estimate' in d)
 
 
-class RetryTest(test.TestCase):
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=[]))
+class JobTestNoBots(test.TestCase):
 
-  def setUp(self):
-    super(RetryTest, self).setUp()
+  def testNoBots(self):
+    with self.assertRaises(errors.SwarmingNoBots):
+      job.Job.New((), (), bug_id=123456)
+
+
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=['a', 'b', 'c', 'd', 'e']))
+class JobTestOddBots(test.TestCase):
+
+  def testOddBots(self):
+    j = job.Job.New((), (), bug_id=123456)
+    self.assertEqual(len(j.bots), 4)
+
+
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=["a"]))
+class RetryTest(test.TestCase):
 
   def testStarted_RecoverableError_BacksOff(self):
     j = job.Job.New((), (), comparison_mode='performance')
@@ -173,9 +197,13 @@ class RetryTest(test.TestCase):
 @mock.patch('dashboard.pinpoint.models.job_state.JobState.ChangesExamined',
             lambda _: 10)
 @mock.patch('dashboard.common.utils.ServiceAccountHttp', mock.MagicMock())
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=["a"]))
 class BugCommentTest(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(BugCommentTest, self).setUp()
     self.add_bug_comment = mock.MagicMock()
     self.get_issue = mock.MagicMock()
@@ -185,6 +213,7 @@ class BugCommentTest(test.TestCase):
     issue_tracker_service.return_value = mock.MagicMock(
         AddBugComment=self.add_bug_comment, GetIssue=self.get_issue)
     self.addCleanup(patcher.stop)
+    self.PatchDatastoreHooksRequest()
 
   def testNoBug(self):
     j = job.Job.New((), ())
@@ -305,6 +334,8 @@ class BugCommentTest(test.TestCase):
   @mock.patch('dashboard.pinpoint.models.change.commit.Commit.AsDict')
   @mock.patch.object(job.job_state.JobState, 'ResultValues')
   @mock.patch.object(job.job_state.JobState, 'Differences')
+  @unittest.skipIf(sys.version_info.major == 3,
+                   'Skipping tests under models/tasks for python 3.')
   def testCompletedMergeIntoExisting(self, differences, result_values,
                                      commit_as_dict):
     c = change.Change((change.Commit('chromium', 'git_hash'),))
@@ -367,8 +398,7 @@ class BugCommentTest(test.TestCase):
     def _GetIssue(bug_id, project='chromium'):
       if bug_id == '111222':
         return {'status': 'Duplicate', 'projectId': project, 'id': '111222'}
-      else:
-        return {'status': 'Untriaged', 'projectId': project, 'id': str(bug_id)}
+      return {'status': 'Untriaged', 'projectId': project, 'id': str(bug_id)}
 
     self.get_issue.side_effect = _GetIssue
     layered_cache.SetExternal('commit_hash_git_hash', 'chromium:111222')
@@ -425,6 +455,8 @@ class BugCommentTest(test.TestCase):
   @mock.patch('dashboard.pinpoint.models.change.commit.Commit.AsDict')
   @mock.patch.object(job.job_state.JobState, 'ResultValues')
   @mock.patch.object(job.job_state.JobState, 'Differences')
+  @unittest.skipIf(sys.version_info.major == 3,
+                   'Skipping tests under models/tasks for python 3.')
   def testCompletedWithCommitAndDocs(self, differences, result_values,
                                      commit_as_dict):
     c = change.Change((change.Commit('chromium', 'git_hash'),))
@@ -737,7 +769,7 @@ class BugCommentTest(test.TestCase):
         for i in range(1, number_culprits + 1)
     ]
     # Return [(None,c1), (c1,c2), (c2,c3), ...]
-    differences.return_value = zip([None] + changes, changes)
+    differences.return_value = list(zip([None] + changes, changes))
 
     # Ensure culprits are ordered by deriving change results values from commit
     # names.  E.g.:
@@ -992,3 +1024,52 @@ class BugCommentTest(test.TestCase):
     self.ExecuteDeferredTasks('default')
     post_change_comment.assert_called_once_with('https://review.com', '123456',
                                                 _COMMENT_CODE_REVIEW)
+
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=["a"]))
+class GetImprovementDirectionTest(testing_common.TestCase):
+
+  @unittest.skipIf(sys.version_info.major == 3,
+                   'Skipping tests under models/tasks for python 3.')
+  def testGetImprovementDirection(self):
+    # create metric and improvement directions
+    t = graph_data.TestMetadata(id='ChromiumPerf/win7/dromaeo/down',)
+    t.improvement_direction = anomaly.DOWN
+    t.put()
+    t = graph_data.TestMetadata(id='ChromiumPerf/win7/dromaeo/up',)
+    t.improvement_direction = anomaly.UP
+    t.put()
+    t = graph_data.TestMetadata(id='ChromiumPerf/win7/dromaeo/unknown',)
+    t.put()
+
+    # test _getImprovementDirection
+    self.PatchDatastoreHooksRequest()
+    j = job.Job.New((), (),
+                    tags={'test_path': "ChromiumPerf/win7/dromaeo/down"})
+    self.assertEqual(j._GetImprovementDirection(), anomaly.DOWN)
+    j = job.Job.New((), (), tags={'test_path': "ChromiumPerf/win7/dromaeo/up"})
+    self.assertEqual(j._GetImprovementDirection(), anomaly.UP)
+    j = job.Job.New((), (),
+                    tags={'test_path': "ChromiumPerf/win7/dromaeo/unknown"})
+    self.assertEqual(j._GetImprovementDirection(), anomaly.UNKNOWN)
+
+
+class GetIterationCountTest(test.TestCase):
+
+  def testEvenlyDivisibleBots(self):
+    self.assertEqual(
+        job.GetIterationCount(initial_attempt_count=6, bot_count=6), 6)
+    self.assertEqual(
+        job.GetIterationCount(initial_attempt_count=12, bot_count=6), 12)
+
+  def testOddAttemptCount(self):
+    self.assertEqual(
+        job.GetIterationCount(initial_attempt_count=5, bot_count=6), 6)
+
+  def testMoreBots(self):
+    self.assertEqual(
+        job.GetIterationCount(initial_attempt_count=5, bot_count=17), 6)
+
+  def testLessBots(self):
+    self.assertEqual(
+        job.GetIterationCount(initial_attempt_count=10, bot_count=7), 14)

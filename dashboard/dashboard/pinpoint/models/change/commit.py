@@ -9,8 +9,17 @@ from __future__ import absolute_import
 import collections
 import datetime
 import re
+import six
 
-from depot_tools import gclient_eval
+if six.PY2:
+  from depot_tools import gclient_eval
+else:
+  try:
+    from depot_tools.depot_tools import gclient_eval
+  except ImportError:
+    # This is a work around to fix the discrepency on file tree in tests.
+    from depot_tools import gclient_eval
+
 from google.appengine.ext import deferred
 
 from dashboard.pinpoint.models.change import commit_cache
@@ -27,7 +36,9 @@ class NonLinearError(Exception):
 
 
 Dep = collections.namedtuple('Dep', ('repository_url', 'git_hash'))
-CommitPositionInfo = collections.namedtuple('CommitPositionInfo', ('branch', 'position'))
+CommitPositionInfo = collections.namedtuple('CommitPositionInfo',
+                                            ('branch', 'position'))
+
 
 def ParseDateWithUTCOffset(date_string):
   # Parsing the utc offset within strptime isn't supported until python 3, so
@@ -58,9 +69,10 @@ def ParseDateWithUTCOffset(date_string):
 class Commit(collections.namedtuple('Commit', ('repository', 'git_hash'))):
   """A git repository pinned to a particular commit."""
 
-  def __init__(self, *args, **kwargs):
-    super(Commit, self).__init__(*args, **kwargs)
+  def __new__(cls, *args, **kwargs):
+    self = super(Commit, cls).__new__(cls, *args, **kwargs)
     self._repository_url = None
+    return self
 
   def __str__(self):
     """Returns an informal short string representation of this Commit."""
@@ -76,7 +88,7 @@ class Commit(collections.namedtuple('Commit', ('repository', 'git_hash'))):
     """The HTTPS URL of the repository as passed to `git clone`."""
     cached_url = getattr(self, '_repository_url', None)
     if not cached_url:
-      self._repository_url = repository_module.RepositoryUrl(self.repository)
+      self._repository_url = repository_module.RepositoryUrl(self.repository)  # pylint: disable=attribute-defined-outside-init
     return self._repository_url
 
   def Deps(self):
@@ -179,7 +191,7 @@ class Commit(collections.namedtuple('Commit', ('repository', 'git_hash'))):
     if repository in utils.GetRepositoryExclusions():
       return None
     commit = cls(repository, str(dep.git_hash).strip())
-    commit._repository_url = dep.repository_url
+    commit._repository_url = dep.repository_url  # pylint: disable=attribute-defined-outside-init
     return commit
 
   @classmethod
@@ -191,10 +203,9 @@ class Commit(collections.namedtuple('Commit', ('repository', 'git_hash'))):
                 or the git hash is not valid.
       ValueError: The URL has an unrecognized format.
     """
-    if isinstance(data, basestring):
+    if isinstance(data, six.string_types):
       return cls.FromUrl(data)
-    else:
-      return cls.FromDict(data)
+    return cls.FromDict(data)
 
   @classmethod
   def FromUrl(cls, url):
@@ -245,10 +256,10 @@ class Commit(collections.namedtuple('Commit', ('repository', 'git_hash'))):
         result = gitiles_service.CommitInfo(repository_url, git_hash)
         git_hash = result['commit']
     except gitiles_service.NotFoundError as e:
-      raise KeyError(str(e))
+      six.raise_from(KeyError(str(e)), e)
 
     commit = cls(repository, git_hash)
-    commit._repository_url = repository_url
+    commit._repository_url = repository_url  # pylint: disable=attribute-defined-outside-init
 
     # IF this is something like HEAD, cache this for a short time so that we
     # avoid hammering gitiles.

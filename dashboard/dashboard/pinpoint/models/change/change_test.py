@@ -7,7 +7,7 @@ from __future__ import division
 from __future__ import absolute_import
 
 from collections import namedtuple
-from six import StringIO
+from six import BytesIO
 import pickle
 
 from dashboard.pinpoint.models.change import change
@@ -308,20 +308,22 @@ class CustomUnpickler(pickle.Unpickler):
 class PickleTest(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(PickleTest, self).setUp()
     self.maxDiff = None
 
   def testBackwardsCompatibility(self):
     old_commit = commit.Commit('chromium', 'aaaaaaaa')
     old = OldChange([old_commit], None)
-    string_io = StringIO()
+    string_io = BytesIO()
     p = pickle.Pickler(string_io)
     p.dump(old)
 
     # Now attempt to unpickle into the current definition, and ensure it works
     # just fine.
     pickled_data = string_io.getvalue()
-    new = CustomUnpickler(StringIO(pickled_data)).load()
+    new = CustomUnpickler(BytesIO(pickled_data)).load()
     self.assertEqual(old.patch, new.patch)
     self.assertEqual(len(old.commits), len(new.commits))
     self.assertIsNone(new.change_label)
@@ -332,6 +334,8 @@ class PickleTest(test.TestCase):
 class MidpointTest(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(MidpointTest, self).setUp()
 
     def _FileContents(repository_url, git_hash, path):
@@ -341,8 +345,7 @@ class MidpointTest(test.TestCase):
       if int(git_hash.split('_')[1]) <= 4:  # DEPS roll at chromium@5
         return 'deps = {"chromium/catapult": "%s@commit_0"}' % (
             test.CATAPULT_URL + '.git')
-      else:
-        return 'deps = {"chromium/catapult": "%s@commit_9"}' % test.CATAPULT_URL
+      return 'deps = {"chromium/catapult": "%s@commit_9"}' % test.CATAPULT_URL
 
     self.file_contents.side_effect = _FileContents
 

@@ -36,9 +36,13 @@ DIMENSIONS = [
 class EvaluatorTest(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(EvaluatorTest, self).setUp()
     self.maxDiff = None
-    self.job = job_module.Job.New((), ())
+    with mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+                    mock.MagicMock(return_value=["a"])):
+      self.job = job_module.Job.New((), ())
     task_module.PopulateTaskGraph(
         self.job,
         run_test.CreateGraph(
@@ -518,9 +522,13 @@ AttributeError: 'Namespace' object has no attribute 'benchmark_names'"""
     self.skipTest('Deferring implementation pending design.')
 
 
+@mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+            mock.MagicMock(return_value=["a"]))
 class ValidatorTest(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(ValidatorTest, self).setUp()
     self.maxDiff = None
 

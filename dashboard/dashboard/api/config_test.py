@@ -7,6 +7,7 @@ from __future__ import division
 from __future__ import absolute_import
 
 import json
+import six
 import unittest
 
 from dashboard.api import api_auth
@@ -17,9 +18,12 @@ from dashboard.common import stored_object
 from dashboard.common import testing_common
 
 
+@unittest.skipIf(six.PY3, 'Skipping webapp2 handler tests for python 3.')
 class ConfigTest(testing_common.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(ConfigTest, self).setUp()
     self.SetUpApp([(r'/api/config', config.ConfigHandler)])
     self.SetCurrentClientIdOAuth(api_auth.OAUTH_CLIENT_ID_ALLOWLIST[0])

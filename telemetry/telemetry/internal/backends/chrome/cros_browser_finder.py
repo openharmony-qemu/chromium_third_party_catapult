@@ -42,7 +42,7 @@ class PossibleCrOSBrowser(possible_browser.PossibleBrowser):
   ]
 
   def __init__(self, browser_type, finder_options, cros_platform, is_guest):
-    super(PossibleCrOSBrowser, self).__init__(
+    super().__init__(
         browser_type,
         'lacros' if browser_type == 'lacros-chrome' else 'cros', True)
     assert browser_type in FindAllBrowserTypes(), (
@@ -83,7 +83,7 @@ class PossibleCrOSBrowser(possible_browser.PossibleBrowser):
     return [self.profile_directory, self.browser_directory]
 
   def SetUpEnvironment(self, browser_options):
-    super(PossibleCrOSBrowser, self).SetUpEnvironment(browser_options)
+    super().SetUpEnvironment(browser_options)
 
     # Copy extensions to temp directories on the device.
     # Note that we also perform this copy locally to ensure that
@@ -231,7 +231,7 @@ def SelectDefaultBrowser(possible_browsers):
 
 
 def CanFindAvailableBrowsers(finder_options):
-  return (cros_device.IsRunningOnCrOS() or finder_options.cros_remote or
+  return (cros_device.IsRunningOnCrOS() or finder_options.remote or
           cros_interface.HasSSH())
 
 
@@ -271,7 +271,7 @@ def FindAllAvailableBrowsers(finder_options, device):
   except cros_interface.LoginException as ex:
     if isinstance(ex, cros_interface.KeylessLoginRequiredException):
       logging.warning('Could not ssh into %s. Your device must be configured',
-                      finder_options.cros_remote)
+                      finder_options.remote)
       logging.warning('to allow passwordless login as root.')
       logging.warning('For a test-build device, pass this to your script:')
       logging.warning('   --identity $(CHROMITE)/ssh_keys/testing_rsa')

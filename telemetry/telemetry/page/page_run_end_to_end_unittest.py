@@ -58,12 +58,12 @@ class ActualPageRunEndToEndTests(unittest.TestCase):
 
     class Test(legacy_page_test.LegacyPageTest):
       def __init__(self):
-        super(Test, self).__init__()
+        super().__init__()
         self.browser_starts = 0
         self.platform_name = None
 
       def DidStartBrowser(self, browser):
-        super(Test, self).DidStartBrowser(browser)
+        super().DidStartBrowser(browser)
         self.browser_starts += 1
         self.platform_name = browser.platform.GetOSName()
 
@@ -74,12 +74,7 @@ class ActualPageRunEndToEndTests(unittest.TestCase):
     results = self.RunStorySet(test, story_set)
     self.assertFalse(results.benchmark_interrupted)
     self.assertEqual(len(story_set), results.num_successful)
-    # Browser is started once per story run, except in ChromeOS where a single
-    # instance is reused for all stories.
-    if test.platform_name == 'chromeos':
-      self.assertEqual(1, test.browser_starts)
-    else:
-      self.assertEqual(len(story_set), test.browser_starts)
+    self.assertEqual(len(story_set), test.browser_starts)
 
   @decorators.Disabled('chromeos')  # crbug.com/483212
   def testUserAgent(self):
@@ -127,7 +122,8 @@ class ActualPageRunEndToEndTests(unittest.TestCase):
     test = TestOneTab()
     self.RunStorySet(test, story_set)
 
-  @decorators.Disabled('linux', 'mac')  # crbug.com/1042080
+  # Flaky crbug.com/1042080, crbug.com/1334472
+  @decorators.Disabled('linux', 'mac', 'chromeos')
   def testTrafficSettings(self):
     story_set = story.StorySet()
     slow_page = page_module.Page(
@@ -145,7 +141,7 @@ class ActualPageRunEndToEndTests(unittest.TestCase):
 
     class MeasureLatency(legacy_page_test.LegacyPageTest):
       def __init__(self):
-        super(MeasureLatency, self).__init__()
+        super().__init__()
         self._will_navigate_time = None
 
       def WillNavigateToPage(self, page, tab):
@@ -186,7 +182,7 @@ class ActualPageRunEndToEndTests(unittest.TestCase):
 
     class TestBeforeLaunch(legacy_page_test.LegacyPageTest):
       def __init__(self):
-        super(TestBeforeLaunch, self).__init__()
+        super().__init__()
         self._did_call_will_start = False
         self._did_call_did_start = False
 
@@ -214,7 +210,7 @@ class ActualPageRunEndToEndTests(unittest.TestCase):
 
     class Test(legacy_page_test.LegacyPageTest):
       def __init__(self):
-        super(Test, self).__init__()
+        super().__init__()
         self.did_call_clean_up = False
 
       def ValidateAndMeasurePage(self, *_):
@@ -248,7 +244,7 @@ class ActualPageRunEndToEndTests(unittest.TestCase):
 
     class Test(legacy_page_test.LegacyPageTest):
       def __init__(self, *args, **kwargs):
-        super(Test, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.will_navigate_to_page_called = False
 
       def ValidateAndMeasurePage(self, *args):
@@ -279,7 +275,7 @@ class ActualPageRunEndToEndTests(unittest.TestCase):
     # Loads a page and scrolls it to the end.
     class ScrollingPage(page_module.Page):
       def __init__(self, url, page_set, base_dir):
-        super(ScrollingPage, self).__init__(page_set=page_set,
+        super().__init__(page_set=page_set,
                                             base_dir=base_dir,
                                             shared_page_state_class=
                                             NoClosingBrowserSharedState,
@@ -292,7 +288,7 @@ class ActualPageRunEndToEndTests(unittest.TestCase):
     # at the top of the page (in was_page_at_top_on_start).
     class CheckScrollPositionPage(page_module.Page):
       def __init__(self, url, page_set, base_dir):
-        super(CheckScrollPositionPage, self).__init__(
+        super().__init__(
             page_set=page_set, base_dir=base_dir,
             shared_page_state_class=NoClosingBrowserSharedState, url=url,
             name='CheckScroll')

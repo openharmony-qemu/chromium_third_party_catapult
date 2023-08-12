@@ -18,7 +18,7 @@ from telemetry.internal.platform import posix_platform_backend
 
 class MacPlatformBackend(posix_platform_backend.PosixPlatformBackend):
   def __init__(self):
-    super(MacPlatformBackend, self).__init__()
+    super().__init__()
 
   def GetSystemLog(self):
     try:
@@ -79,18 +79,21 @@ class MacPlatformBackend(posix_platform_backend.PosixPlatformBackend):
       return os_version_module.BIGSUR
     if os_version.startswith('21.'):
       return os_version_module.MONTEREY
+    if os_version.startswith('22.'):
+      return os_version_module.VENTURA
 
     raise NotImplementedError('Unknown mac version %s.' % os_version)
 
   def GetTypExpectationsTags(self):
     # telemetry benchmarks expectations need to know if the version number
     # of the operating system is 10.12 or 10.13
-    tags = super(MacPlatformBackend, self).GetTypExpectationsTags()
+    tags = super().GetTypExpectationsTags()
     detail_string = self.GetOSVersionDetailString()
     if detail_string.startswith('10.11'):
       tags.append('mac-10.11')
     elif detail_string.startswith('10.12'):
       tags.append('mac-10.12')
+    tags.append('mac-' + os.uname()[4])
     return tags
 
   @decorators.Cache

@@ -37,6 +37,7 @@ class TimeseriesHandler(api_request_handler.ApiRequestHandler):
       JSON timeseries data for the test_path, see README.md.
     """
     del kwargs  # unused.
+    utils.LogObsoleteHandlerUsage(self, 'POST')
     try:
       days = int(self.request.get('num_days', 30))
     except ValueError as e:

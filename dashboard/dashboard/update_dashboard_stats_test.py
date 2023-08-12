@@ -49,6 +49,8 @@ class _QuestStub(quest.Quest):
 class ExecutionResults(execution_test._ExecutionStub):
 
   def __init__(self, c):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(ExecutionResults, self).__init__()
     self._result_for_test = _RESULTS_BY_CHANGE[str(c)]
 
@@ -71,6 +73,8 @@ def _FakeTasklet(*args):
 class UpdateDashboardStatsTest(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(UpdateDashboardStatsTest, self).setUp()
     app = webapp2.WSGIApplication([
         ('/update_dashboard_stats',
@@ -92,16 +96,18 @@ class UpdateDashboardStatsTest(test.TestCase):
     old_commit = commit.Commit('chromium', hash2)
     change_b = change_module.Change((old_commit,))
 
-    job = job_module.Job.New((_QuestStub(),), (change_a, change_b),
-                             comparison_mode=comparison_mode,
-                             bug_id=bug_id,
-                             arguments=arguments)
-    job.created = created
-    job.exception = exception
-    job.state.ScheduleWork()
-    job.state.Explore()
-    job.put()
-    return job
+    with mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
+                    mock.MagicMock(return_value=["a"])):
+      job = job_module.Job.New((_QuestStub(),), (change_a, change_b),
+                               comparison_mode=comparison_mode,
+                               bug_id=bug_id,
+                               arguments=arguments)
+      job.created = created
+      job.exception = exception
+      job.state.ScheduleWork()
+      job.state.Explore()
+      job.put()
+      return job
 
   @mock.patch.object(update_dashboard_stats, '_ProcessPinpointJobs',
                      mock.MagicMock(side_effect=_FakeTasklet))

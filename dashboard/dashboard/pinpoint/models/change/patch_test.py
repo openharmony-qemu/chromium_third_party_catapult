@@ -73,6 +73,8 @@ _GERRIT_CHANGE_INFO = {
 class GerritPatchTest(test.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(GerritPatchTest, self).setUp()
     self.get_change.return_value = _GERRIT_CHANGE_INFO
 
@@ -119,7 +121,7 @@ class GerritPatchTest(test.TestCase):
   def testAsDict_MissingPatch(self):
     p = Patch('unknown revision')
     self.get_change.side_effect = gerrit_service.NotFoundError(
-        msg='Change ID not found', content=None)
+        msg='Change ID not found', headers=None, content=None)
     self.assertEqual(
         p.AsDict(), {
             'server': 'https://codereview.com',

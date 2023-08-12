@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 from __future__ import absolute_import
-import optparse
+import optparse  # pylint: disable=deprecated-module
 import os
 import unittest
 
@@ -156,7 +156,7 @@ class BrowserOptionsTest(unittest.TestCase):
     parser = options.CreateParser()
     parser.parse_args(['--browser=cros-chrome', '--remote=localhost'])
     serv_mock.assert_called()
-    self.assertEqual(options.cros_remote_ssh_port, 22)
+    self.assertEqual(options.remote_ssh_port, 22)
 
   @mock.patch('socket.getservbyname')
   def testGetServByNameNotCalledWithPortSpecified(self, serv_mock):

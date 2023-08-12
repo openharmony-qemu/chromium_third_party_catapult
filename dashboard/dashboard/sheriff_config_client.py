@@ -7,6 +7,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import six
+
 
 class InternalServerError(Exception):
   """An error indicating that something unexpected happens."""
@@ -23,6 +25,8 @@ def GetSheriffConfigClient():
   return GetSheriffConfigClient._client
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class SheriffConfigClient(object):
   """Wrapping of sheriff-config HTTP API."""
 
@@ -33,10 +37,14 @@ class SheriffConfigClient(object):
     # Defer as many imports as possible until here, to ensure AppEngine
     # workarounds for protobuf import paths are fully installed.
     self._InitSession()
+    # pylint: disable=import-outside-toplevel
     from dashboard.common.utils import GetEmail
+    # pylint: disable=import-outside-toplevel
     from dashboard.models.subscription import Subscription, AnomalyConfig
+    # pylint: disable=import-outside-toplevel
     from google.protobuf import json_format
-    from dashboard import sheriff_config_pb2
+    # pylint: disable=import-outside-toplevel
+    from dashboard.proto import sheriff_config_pb2
     self._GetEmail = GetEmail  # pylint: disable=invalid-name
     SheriffConfigClient._Subscription = Subscription
     SheriffConfigClient._AnomalyConfig = AnomalyConfig
@@ -44,11 +52,19 @@ class SheriffConfigClient(object):
     self._sheriff_config_pb2 = sheriff_config_pb2
 
   def _InitSession(self):
+    # pylint: disable=import-outside-toplevel
     import google.auth
+    # pylint: disable=import-outside-toplevel
     from google.auth import jwt
+    # pylint: disable=import-outside-toplevel
     from google.auth.transport.requests import AuthorizedSession
-    credentials, _ = google.auth.default(
-        scopes=['https://www.googleapis.com/auth/userinfo.email'])
+    if six.PY2:
+      credentials, _ = google.auth.default(
+          scopes=['https://www.googleapis.com/auth/userinfo.email'])
+    else:
+      from google.auth import app_engine  # pylint: disable=import-outside-toplevel
+      credentials = app_engine.Credentials(
+          scopes=['https://www.googleapis.com/auth/userinfo.email'])
     jwt_credentials = jwt.Credentials.from_signing_credentials(
         credentials, 'sheriff-config-dot-chromeperf.appspot.com')
     self._session = AuthorizedSession(jwt_credentials)

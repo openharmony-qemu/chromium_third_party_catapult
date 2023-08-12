@@ -21,6 +21,7 @@ import collections
 import datetime
 import functools
 import random
+import logging
 
 from google.appengine.ext import ndb
 
@@ -62,7 +63,6 @@ class SampleElementTiming(ndb.Model):
 
 class Queues(ndb.Model):
   """A root element for all queues."""
-  pass
 
 
 class ConfigurationQueue(ndb.Model):
@@ -110,6 +110,8 @@ class ConfigurationQueue(ndb.Model):
     ]
     if len(self.samples) > 50:
       self.samples = random.sample(self.samples, 50)
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(ConfigurationQueue, self).put()
 
 
@@ -203,7 +205,7 @@ def PickJobs(configuration, budget=1.0):
   # Sort the jobs in priority and submission time. Note that we can starve lower
   # priority (those whose priority is higher than 0) jobs by design, since we'll
   # assume those are batch jobs.
-  queue.jobs.sort(key=lambda j: (j.priority, j.timestamp))
+  queue.jobs.sort(key=lambda j: (j.priority or 0, j.timestamp))
   for job in queue.jobs:
     # Short-circuit out if the budget is not exhausted.
     if budget <= 0.0:
@@ -244,6 +246,7 @@ def QueueStats(configuration):
   queue = ConfigurationQueue.get_by_id(
       configuration, parent=ndb.Key('Queues', 'root'))
   if not queue:
+    logging.warning('Failed to find queue for configuration: %s', configuration)
     raise QueueNotFound()
 
   def StatCombiner(status_map, job):

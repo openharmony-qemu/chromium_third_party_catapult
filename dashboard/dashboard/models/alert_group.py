@@ -14,6 +14,8 @@ from google.appengine.ext import ndb
 # have a chance to be live before we import any proto code.
 from dashboard import sheriff_config_client
 
+NONOVERLAP_THRESHOLD = 100
+
 
 class RevisionRange(ndb.Model):
   repository = ndb.StringProperty()
@@ -24,6 +26,10 @@ class RevisionRange(ndb.Model):
     if not b or self.repository != b.repository:
       return False
     return max(self.start, b.start) <= min(self.end, b.end)
+
+  def HasSmallNonoverlap(self, b):
+    return ((abs(self.start - b.start) + abs(self.end - b.end)) <=
+            NONOVERLAP_THRESHOLD)
 
 
 class BugInfo(ndb.Model):
@@ -38,6 +44,8 @@ class AlertGroup(ndb.Model):
   created = ndb.DateTimeProperty(indexed=False, auto_now_add=True)
   updated = ndb.DateTimeProperty(indexed=False, auto_now_add=True)
 
+  # TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+  # pylint: disable=useless-object-inheritance
   class Status(object):
     unknown = 0
     untriaged = 1
@@ -47,6 +55,8 @@ class AlertGroup(ndb.Model):
 
   status = ndb.IntegerProperty(indexed=False)
 
+  # TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+  # pylint: disable=useless-object-inheritance
   class Type(object):
     test_suite = 0
     logical = 1
@@ -72,7 +82,9 @@ class AlertGroup(ndb.Model):
             and self.subscription_name == b.subscription_name
             and self.project_id == b.project_id
             and self.group_type == b.group_type
-            and self.revision.IsOverlapping(b.revision))
+            and self.revision.IsOverlapping(b.revision)
+            and (self.revision.HasSmallNonoverlap(b.revision)
+                 if self.domain == 'ChromiumPerf' else True))
 
   @classmethod
   def GetType(cls, anomaly_entity):

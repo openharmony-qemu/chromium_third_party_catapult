@@ -10,13 +10,18 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
-import webapp2
-
 from google.appengine.api import apiproxy_stub_map
 from google.appengine.api import users
 from google.appengine.datastore import datastore_pb
 
 from dashboard.common import utils
+import six
+
+from flask import g as flask_global
+from flask import request as flask_request
+
+if not utils.IsRunningFlask():
+  import webapp2
 
 # The list below contains all kinds that have an internal_only property.
 # IMPORTANT: any new data types with internal_only properties must be added
@@ -49,66 +54,118 @@ def InstallHooks():
                                                     'datastore_v3')
 
 
-def SetPrivilegedRequest():
+def SetPrivilegedRequest(flask_flag=False):
   """Allows the current request to act as a privileged user.
 
   This should ONLY be called for handlers that are restricted from end users
   by some other mechanism (IP allowlist, admin-only pages).
 
   This should be set once per request, before accessing the data store.
+
+  Args:
+    flask_flag - Determines if running on flask handlers when routing from URL.
+        Default False.
   """
-  request = webapp2.get_request()
-  request.registry['privileged'] = True
+  if utils.IsRunningFlask() or flask_flag:
+    flask_global.privileged = True
+  else:
+    request = webapp2.get_request()
+    request.registry['privileged'] = True
 
 
-def SetSinglePrivilegedRequest():
+def SetSinglePrivilegedRequest(flask_flag=False):
   """Allows the current request to act as a privileged user only ONCE.
 
   This should be called ONLY by handlers that have checked privilege immediately
   before making a query. It will be automatically unset when the next query is
   made.
+
+  Args:
+    flask_flag - Determines if running on flask handlers when routing from URL.
+        Default False.
   """
-  request = webapp2.get_request()
-  request.registry['single_privileged'] = True
-
-
-def CancelSinglePrivilegedRequest():
-  """Disallows the current request to act as a privileged user only."""
-  request = webapp2.get_request()
-  request.registry['single_privileged'] = False
-
-
-def _IsServicingPrivilegedRequest():
-  """Checks whether the request is considered privileged."""
-  try:
+  if utils.IsRunningFlask() or flask_flag:
+    flask_global.single_privileged = True
+  else:
     request = webapp2.get_request()
-  except AssertionError:
-    # This happens in unit tests, when code gets called outside of a request.
-    return False
-  path = getattr(request, 'path', '')
-  if path.startswith('/mapreduce'):
-    return True
-  if path.startswith('/_ah/queue/deferred'):
-    return True
-  if path.startswith('/_ah/pipeline/'):
-    return True
-  if request.registry.get('privileged', False):
-    return True
-  if request.registry.get('single_privileged', False):
+    request.registry['single_privileged'] = True
+
+
+def CancelSinglePrivilegedRequest(flask_flag=False):
+  """Disallows the current request to act as a privileged user only.
+
+  Args:
+    flask_flag - Determines if running on flask handlers when routing from URL.
+        Default False.
+  """
+  if utils.IsRunningFlask() or flask_flag:
+    flask_global.single_privileged = False
+  else:
+    request = webapp2.get_request()
     request.registry['single_privileged'] = False
-    return True
-  allowlist = utils.GetIpAllowlist()
-  if allowlist and hasattr(request, 'remote_addr'):
-    return request.remote_addr in allowlist
+
+
+def _IsServicingPrivilegedRequest(flask_flag=False):
+  """Checks whether the request is considered privileged.
+
+  Args:
+    flask_flag - Determines if running on flask handlers when routing from URL.
+        Default False.
+  """
+  if utils.IsRunningFlask() or flask_flag:
+    try:
+      path = flask_request.path
+    except RuntimeError:
+      # This happens in unit tests, when code gets called outside of a request.
+      return False
+    if path.startswith('/mapreduce'):
+      return True
+    if path.startswith('/_ah/queue/deferred'):
+      return True
+    if path.startswith('/_ah/pipeline/'):
+      return True
+    if 'privileged' in flask_global and flask_global.privileged:
+      return True
+    if 'single_privileged' in flask_global and flask_global.single_privileged:
+      flask_global.pop('single_privileged')
+      return True
+    allowlist = utils.GetIpAllowlist()
+    if allowlist and hasattr(flask_request, 'remote_addr'):
+      return flask_request.remote_addr in allowlist
+  else:
+    try:
+      request = webapp2.get_request()
+    except AssertionError:
+      # This happens in unit tests, when code gets called outside of a request.
+      return False
+    path = getattr(request, 'path', '')
+    if path.startswith('/mapreduce'):
+      return True
+    if path.startswith('/_ah/queue/deferred'):
+      return True
+    if path.startswith('/_ah/pipeline/'):
+      return True
+    if request.registry.get('privileged', False):
+      return True
+    if request.registry.get('single_privileged', False):
+      request.registry['single_privileged'] = False
+      return True
+    allowlist = utils.GetIpAllowlist()
+    if allowlist and hasattr(request, 'remote_addr'):
+      return request.remote_addr in allowlist
   return False
 
 
-def IsUnalteredQueryPermitted():
+def IsUnalteredQueryPermitted(flask_flag=False):
   """Checks if the current user is internal, or the request is privileged.
 
   "Internal users" are users whose email address belongs to a certain
   privileged domain; but some privileged requests, such as task queue tasks,
   are also considered privileged.
+
+  Args:
+    flask_flag - Determines if running on flask handlers when routing from URL.
+        Default False.
 
   Returns:
     True for users with google.com emails and privileged requests.
@@ -119,7 +176,7 @@ def IsUnalteredQueryPermitted():
     # It's possible to be an admin with a non-internal account; For example,
     # the default login for dev appserver instances is test@example.com.
     return True
-  return _IsServicingPrivilegedRequest()
+  return _IsServicingPrivilegedRequest(flask_flag)
 
 
 def GetNamespace():
@@ -144,20 +201,28 @@ def _DatastorePreHook(service, call, request, _):
   assert service == 'datastore_v3'
   if call != 'RunQuery':
     return
-  if request.kind() not in _INTERNAL_ONLY_KINDS:
-    return
   if IsUnalteredQueryPermitted():
     return
 
   # Add a filter for internal_only == False, because the user is external.
-  try:
-    external_filter = request.filter_list().add()
-  except AttributeError:
-    # This is required to support proto1, which may be used by the unit tests.
-    # Later, if we don't need to support proto1, then this can be removed.
-    external_filter = request.add_filter()
-  external_filter.set_op(datastore_pb.Query_Filter.EQUAL)
-  new_property = external_filter.add_property()
-  new_property.set_name('internal_only')
-  new_property.mutable_value().set_booleanvalue(False)
-  new_property.set_multiple(False)
+  if six.PY2:
+    if request.kind() not in _INTERNAL_ONLY_KINDS:
+      return
+    try:
+      external_filter = request.filter_list().add()
+    except AttributeError:
+      external_filter = request.add_filter()
+    external_filter.set_op(datastore_pb.Query_Filter.EQUAL)
+    new_property = external_filter.add_property()
+    new_property.set_name('internal_only')
+    new_property.mutable_value().set_booleanvalue(False)
+    new_property.set_multiple(False)
+  else:
+    if request.kind not in _INTERNAL_ONLY_KINDS:
+      return
+    query_filter = request.filter.add()
+    query_filter.op = datastore_pb.Query.Filter.EQUAL
+    filter_property = query_filter.property.add()
+    filter_property.name = 'internal_only'
+    filter_property.value.booleanValue = False
+    filter_property.multiple = False

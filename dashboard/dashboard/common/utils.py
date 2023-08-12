@@ -7,13 +7,17 @@ from __future__ import division
 from __future__ import absolute_import
 
 import collections
+import functools
 import logging
 import os
 import re
+import six
+import six.moves.urllib.parse
 import time
 
 from apiclient import discovery
 from apiclient import errors
+import flask
 from google.appengine.api import app_identity
 from google.appengine.api import memcache
 from google.appengine.api import oauth
@@ -21,12 +25,8 @@ from google.appengine.api import urlfetch
 from google.appengine.api import urlfetch_errors
 from google.appengine.api import users
 from google.appengine.ext import ndb
-import httplib2
-from oauth2client import client
 
 from dashboard.common import stored_object
-import six
-import six.moves.urllib.parse
 
 SHERIFF_DOMAINS_KEY = 'sheriff_domains_key'
 IP_ALLOWLIST_KEY = 'ip_whitelist'
@@ -38,6 +38,12 @@ _PROJECT_ID_KEY = 'project_id'
 _DEFAULT_CUSTOM_METRIC_VAL = 1
 OAUTH_SCOPES = ('https://www.googleapis.com/auth/userinfo.email',)
 OAUTH_ENDPOINTS = ['/api/', '/add_histograms', '/add_point', '/uploads']
+# testing endpoints for flask
+OAUTH_ENDPOINTS += ['/add_histograms_flask', '/add_point_flask']
+LEGACY_SERVICE_ACCOUNT = (
+    '425761728072-pa1bs18esuhp2cp2qfa1u9vb6p1v6kfu@developer.gserviceaccount.com'
+)
+_CACHE_TIME = 60*60*2 # 2 hours
 
 _AUTOROLL_DOMAINS = (
     'chops-service-accounts.iam.gserviceaccount.com',
@@ -65,15 +71,22 @@ class _SimpleCache(
 
 _PINPOINT_REPO_EXCLUSION_TTL = 60  # seconds
 _PINPOINT_REPO_EXCLUSION_CACHED = _SimpleCache(0, None)
+_STAGING_APP_ID = 'chromeperf-stage'
 
 
 def IsDevAppserver():
-  return app_identity.get_application_id() == 'None'
+  try:
+    return app_identity.get_application_id() == 'None'
+  except AttributeError:
+    return False
 
 
-def _GetNowRfc3339():
-  """Returns the current time formatted per RFC 3339."""
-  return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+def IsStagingEnvironment():
+  """ Check if running in staging environment """
+  try:
+    return app_identity.get_application_id() == _STAGING_APP_ID
+  except AttributeError:
+    return False
 
 
 def GetEmail():
@@ -88,7 +101,7 @@ def GetEmail():
     OAuthRequestError: The request was not a valid OAuth request.
     OAuthServiceFailureError: An unknown error occurred.
   """
-  request_uri = os.environ.get('REQUEST_URI', '')
+  request_uri = os.environ.get('PATH_INFO', '')
   if any(request_uri.startswith(e) for e in OAUTH_ENDPOINTS):
     # Prevent a CSRF whereby a malicious site posts an api request without an
     # Authorization header (so oauth.get_current_user() is None), but while the
@@ -96,48 +109,16 @@ def GetEmail():
     # return a non-None user.
     if 'HTTP_AUTHORIZATION' not in os.environ:
       # The user is not signed in. Avoid raising OAuthRequestError.
+      logging.info('Cannot get user email as the user is not signed in')
       return None
     user = oauth.get_current_user(OAUTH_SCOPES)
   else:
-    user = users.get_current_user()
+    user = GetGaeCurrentUser()
   return user.email() if user else None
 
 
-@ndb.transactional(propagation=ndb.TransactionOptions.INDEPENDENT, xg=True)
-def TickMonitoringCustomMetric(metric_name):
-  """Increments the stackdriver custom metric with the given name.
-
-  This is used for cron job monitoring; if these metrics stop being received
-  an alert mail is sent. For more information on custom metrics, see
-  https://cloud.google.com/monitoring/custom-metrics/using-custom-metrics
-
-  Args:
-    metric_name: The name of the metric being monitored.
-  """
-  credentials = client.GoogleCredentials.get_application_default()
-  monitoring = discovery.build('monitoring', 'v3', credentials=credentials)
-  now = _GetNowRfc3339()
-  project_id = stored_object.Get(_PROJECT_ID_KEY)
-  points = [{
-      'interval': {
-          'startTime': now,
-          'endTime': now,
-      },
-      'value': {
-          'int64Value': _DEFAULT_CUSTOM_METRIC_VAL,
-      },
-  }]
-  write_request = monitoring.projects().timeSeries().create(
-      name='projects/%s' % project_id,
-      body={
-          'timeSeries': [{
-              'metric': {
-                  'type': 'custom.googleapis.com/%s' % metric_name,
-              },
-              'points': points
-          }]
-      })
-  write_request.execute()
+def GetGaeCurrentUser():
+  return users.GetCurrentUser() if six.PY3 else users.get_current_user()
 
 
 def TestPath(key):
@@ -318,7 +299,10 @@ def MostSpecificMatchingPattern(test, pattern_data_tuples):
     # 0 to indicate that we've found an equality.
     return 0
 
-  matching_patterns.sort(cmp=CmpPatterns)  # pylint: disable=using-cmp-argument
+  if six.PY2:
+    matching_patterns.sort(cmp=CmpPatterns)  # pylint: disable=using-cmp-argument
+  else:
+    matching_patterns.sort(key=functools.cmp_to_key(CmpPatterns))
 
   return matching_patterns[0][1]
 
@@ -521,7 +505,7 @@ def GetCachedIsInternalUser(email):
 
 
 def SetCachedIsInternalUser(email, value):
-  memcache.set(_IsInternalUserCacheKey(email), value, time=60 * 60 * 24)
+  memcache.set(_IsInternalUserCacheKey(email), value, time=_CACHE_TIME)
 
 
 def GetCachedIsAdministrator(email):
@@ -529,7 +513,7 @@ def GetCachedIsAdministrator(email):
 
 
 def SetCachedIsAdministrator(email, value):
-  memcache.set(_IsAdministratorUserCacheKey(email), value, time=60 * 60 * 24)
+  memcache.set(_IsAdministratorUserCacheKey(email), value, time=_CACHE_TIME)
 
 
 def _IsInternalUserCacheKey(email):
@@ -565,6 +549,8 @@ class GroupMemberAuthFailed(Exception):
   pass
 
 
+# TODO(https://crbug.com/1262292): raise directly after Python2 trybots retire.
+# pylint: disable=inconsistent-return-statements
 def IsGroupMember(identity, group):
   """Checks if a user is a group member of using chrome-infra-auth.appspot.com.
 
@@ -605,7 +591,7 @@ def GetCachedIsGroupMember(identity, group):
 
 def SetCachedIsGroupMember(identity, group, value):
   memcache.set(
-      _IsGroupMemberCacheKey(identity, group), value, time=60 * 60 * 24)
+      _IsGroupMemberCacheKey(identity, group), value, time=_CACHE_TIME)
 
 
 def _IsGroupMemberCacheKey(identity, group):
@@ -632,14 +618,31 @@ def ServiceAccountHttp(scope=EMAIL_SCOPE, timeout=None):
 
   assert scope, "ServiceAccountHttp scope must not be None."
 
-  client.logger.setLevel(logging.WARNING)
-  credentials = client.SignedJwtAssertionCredentials(
-      service_account_name=account_details['client_email'],
-      private_key=account_details['private_key'],
-      scope=scope)
+  if six.PY2:
+    from oauth2client import client  # pylint: disable=import-outside-toplevel
+    import httplib2  # pylint: disable=import-outside-toplevel
+    client.logger.setLevel(logging.WARNING)
+    credentials = client.SignedJwtAssertionCredentials(
+        service_account_name=account_details['client_email'],
+        private_key=account_details['private_key'],
+        scope=scope)
+    http = httplib2.Http(timeout=timeout)
+    credentials.authorize(http)
+  else:
+    from google.auth import crypt  # pylint: disable=import-outside-toplevel
+    from google.oauth2 import service_account  # pylint: disable=import-outside-toplevel
+    import google_auth_httplib2  # pylint: disable=import-outside-toplevel
 
-  http = httplib2.Http(timeout=timeout)
-  credentials.authorize(http)
+    signer = crypt.RSASigner.from_string(account_details['private_key'])
+    default_token_uri = 'https://accounts.google.com/o/oauth2/token'
+    credentials = service_account.Credentials(
+        signer=signer,
+        service_account_email=account_details['client_email'],
+        token_uri=default_token_uri,
+        scopes=[scope])
+    http = google_auth_httplib2.AuthorizedHttp(credentials)
+    if timeout:
+      http.timeout = timeout
   return http
 
 
@@ -662,6 +665,7 @@ def IsTryjobUser():
     return bool(email) and IsGroupMember(
         identity=email, group='project-pinpoint-tryjob-access')
   except GroupMemberAuthFailed:
+    logging.info('User is not a member of project-pinpoint-tryjob-access.')
     return False
 
 
@@ -799,7 +803,7 @@ def GetBuildDetailsFromStdioLink(stdio_link):
     # This wasn't a buildbot formatted link.
     return no_details
   base_url, master, bot, buildnumber, step = m.groups()
-  bot = six.moves.urllib.parse.unquote(bot)  # pylint: disable=too-many-function-args
+  bot = six.moves.urllib.parse.unquote(bot)
   return base_url, master, bot, buildnumber, step
 
 
@@ -836,3 +840,80 @@ def IsMonitored(sheriff_client, test_path):
   if subscriptions:
     return True
   return False
+
+
+def GetBuildbucketUrl(build_id):
+  if build_id:
+    return 'https://ci.chromium.org/b/%s' % build_id
+  return ''
+
+
+def RequestParamsMixed(req):
+  """
+  Returns a dictionary where the values are either single
+  values, or a list of values when a key/value appears more than
+  once in this dictionary.  This is similar to the kind of
+  dictionary often used to represent the variables in a web
+  request.
+  """
+  result = {}
+  multi = {}
+  for key, value in req.values.items(True):
+    if key in result:
+      # We do this to not clobber any lists that are
+      # *actual* values in this dictionary:
+      if key in multi:
+        result[key].append(value)
+      else:
+        result[key] = [result[key], value]
+        multi[key] = None
+    else:
+      result[key] = value
+  return result
+
+
+def IsRunningFlask():
+  return flask.has_request_context() or six.PY3
+
+
+def SanitizeArgs(args, key_name, default):
+  if key_name not in args:
+    logging.warning(
+        '%s is not found in the query arguments. Using "%s" as default.',
+        key_name, default)
+    return default
+  value = args[key_name]
+  if value in ('', 'undefined'):
+    logging.warning('%s has %s as the value. Using "%s" as default.', key_name,
+                    value, default)
+    return default
+  return value
+
+
+def LogObsoleteHandlerUsage(handler, method):
+  class_name = type(handler).__name__
+  logging.warning('Obsolete PY2 handler is called unexpectedly. %s:%s',
+                  class_name, method)
+
+
+def ConvertBytesBeforeJsonDumps(src):
+  """ convert a json object to safe to do json.dumps()
+
+  During the python 3 migration, we have seen multiple cases that raw data
+  is loaded as part of a json object but in bytes. This will fail the
+  json.dumps() calls on this object. We want to convert all the bytes to
+  avoid this situation.
+  """
+
+  if isinstance(src, dict):
+    for k, v in src.items():
+      if isinstance(v, bytes):
+        src[k] = six.ensure_str(v)
+      else:
+        src[k] = ConvertBytesBeforeJsonDumps(v)
+  elif isinstance(src, list):
+    for i, v in enumerate(src):
+      src[i] = ConvertBytesBeforeJsonDumps(v)
+  elif isinstance(src, bytes):
+    return six.ensure_str(src)
+  return src

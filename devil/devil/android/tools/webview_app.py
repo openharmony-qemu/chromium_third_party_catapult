@@ -81,10 +81,11 @@ def UseWebViewProvider(device, apk, expected_package=''):
         raise device_errors.CommandFailedError(
             'Non-System application paths found after uninstallation: ',
             str(non_system_paths))
-      elif system_paths:
+      if system_paths:
         # app is system app, use ReplaceSystemApp to install
         with system_app.ReplaceSystemApp(
-            device, package_name, apk,
+            device,
+            replacement_apk=apk,
             install_timeout=_WEBVIEW_INSTALL_TIMEOUT):
           _SetWebViewProvider(device, package_name)
           yield

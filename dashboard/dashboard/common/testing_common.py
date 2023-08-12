@@ -17,8 +17,10 @@ import os
 import re
 import sys
 import unittest
+import six
 import six.moves.urllib.parse
-import webapp2
+if six.PY2:
+  import webapp2
 import webtest
 
 from google.appengine.api import oauth
@@ -42,6 +44,8 @@ EXTERNAL_USER = users.User(
     email='external@example.com', _auth_domain='example.com')
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class FakeRequestObject(object):
   """Fake Request object which can be used by datastore_hooks mocks."""
 
@@ -50,6 +54,8 @@ class FakeRequestObject(object):
     self.remote_addr = remote_addr
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class FakeResponseObject(object):
   """Fake Response Object which can be returned by urlfetch mocks."""
 
@@ -89,10 +95,14 @@ class TestCase(unittest.TestCase):
     self.addCleanup(self.logger.removeHandler, self.stream_handler)
 
   def SetUpApp(self, handlers):
-    self.testapp = webtest.TestApp(webapp2.WSGIApplication(handlers))
+    if six.PY2:
+      self.testapp = webtest.TestApp(webapp2.WSGIApplication(handlers))
+
+  def SetUpFlaskApp(self, flask_app):
+    self.testapp = webtest.TestApp(flask_app)
 
   def PatchEnviron(self, path):
-    environ_patch = {'REQUEST_URI': path}
+    environ_patch = {'PATH_INFO': path}
     try:
       if oauth.get_current_user(utils.OAUTH_SCOPES):
         # SetCurrentUserOAuth mocks oauth.get_current_user() directly. That
@@ -107,7 +117,14 @@ class TestCase(unittest.TestCase):
         environ_patch['HTTP_AUTHORIZATION'] = ''
     except oauth.Error:
       pass
+    if six.PY3:
+      # In Python 3, the 'HTTP_AUTHORIZATION' is found removed in the handler.
+      self.testapp.extra_environ.update(environ_patch)
     return mock.patch.dict(os.environ, environ_patch)
+
+  def Get(self, path, *args, **kwargs):
+    with self.PatchEnviron(path):
+      return self.testapp.get(path, *args, **kwargs)
 
   def Post(self, path, *args, **kwargs):
     with self.PatchEnviron(path):
@@ -123,7 +140,7 @@ class TestCase(unittest.TestCase):
       responses.append(
           self.Post(
               handler_name,
-              six.moves.urllib.parse.unquote_plus(  # pylint: disable=too-many-function-args
+              six.moves.urllib.parse.unquote_plus(
                   base64.b64decode(task['body']))))
       if recurse:
         responses.extend(
@@ -333,6 +350,8 @@ def SetIpAllowlist(ip_addresses):
 
 
 # TODO(fancl): Make it a "real" fake issue tracker.
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class FakeIssueTrackerService(object):
   """A fake version of IssueTrackerService that saves call values."""
 
@@ -375,6 +394,7 @@ class FakeIssueTrackerService(object):
             'Blink>ServiceWorker',
             'Foo>Bar',
         ],
+        'mergedInto': {},
         'published': '2017-06-28T01:26:53',
         'updated': '2018-03-01T16:16:22',
     }
@@ -447,6 +467,8 @@ class FakeIssueTrackerService(object):
     return self.issue_comments.get((project, issue_id), [])
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class FakeSheriffConfigClient(object):
 
   def __init__(self):
@@ -461,6 +483,8 @@ class FakeSheriffConfigClient(object):
     return [], None
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class FakeCrrev(object):
 
   def __init__(self):
@@ -478,6 +502,8 @@ class FakeCrrev(object):
     return self._response
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class FakePinpoint(object):
 
   def __init__(self):
@@ -496,6 +522,8 @@ class FakePinpoint(object):
     return self._response
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class FakeGitiles(object):
 
   def __init__(self, repo_commit_list=None):
@@ -506,6 +534,8 @@ class FakeGitiles(object):
     return self._repo_commit_list.get(repo, {}).get(revision, {})
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class FakeRevisionInfoClient(object):
 
   def __init__(self, infos, revisions):
@@ -533,6 +563,8 @@ class FakeRevisionInfoClient(object):
     return infos
 
 
+# TODO(https://crbug.com/1262292): Update after Python2 trybots retire.
+# pylint: disable=useless-object-inheritance
 class FakeCASClient(object):
 
   _trees = {}

@@ -8,6 +8,7 @@ from __future__ import absolute_import
 
 import collections
 import json
+import six
 
 try:
   from itertools import zip_longest
@@ -39,6 +40,9 @@ class Change(
       args: A list of strings associated with a Change.
       variant: 0=base, 1..N=expN. Only valid for A/B jobs.
     """
+    # Handle empty-string patch
+    if not patch:
+      patch = None
     if not (commits or patch):
       raise TypeError('At least one commit or patch required.')
     return super(Change, cls).__new__(cls, tuple(commits), patch, label,
@@ -164,10 +168,9 @@ class Change(
 
   @classmethod
   def FromData(cls, data):
-    if isinstance(data, basestring):
+    if isinstance(data, six.string_types):
       return cls.FromUrl(data)
-    else:
-      return cls.FromDict(data)
+    return cls.FromDict(data)
 
   @classmethod
   def FromUrl(cls, url):

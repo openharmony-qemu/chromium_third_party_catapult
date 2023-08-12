@@ -15,7 +15,9 @@ from telemetry.internal.util import binary_manager
 from telemetry.testing import browser_test_context
 from telemetry.testing import serially_executed_browser_test_case
 
+from py_utils import cloud_storage
 from py_utils import discover
+
 import typ
 from typ import arg_parser
 
@@ -189,6 +191,10 @@ def _CreateTestArgParsers():
       '--debug-shard-distributions',
       action='store_true', default=False,
       help='Print debugging information about the shards\' test distributions')
+  parser.add_argument(
+      '--disable-cloud-storage-io',
+      action='store_true', default=False,
+      help=('Disable cloud storage IO.'))
 
   parser.add_argument('--default-chrome-root', type=str, default=None)
   parser.add_argument(
@@ -210,8 +216,12 @@ def _GetClassifier(typ_runner):
     if typ_runner.should_skip(test):
       test_set.add_test_to_skip(test, 'skipped because matched --skip')
       return
-    # For now, only support running these tests serially.
-    test_set.add_test_to_run_isolated(test)
+    # Default to running the test in isolation unless it has specifically opted
+    # in to parallel execution.
+    if test.CanRunInParallel():
+      test_set.add_test_to_run_in_parallel(test)
+    else:
+      test_set.add_test_to_run_isolated(test)
   return _SeriallyExecutedBrowserTestCaseClassifer
 
 
@@ -245,7 +255,7 @@ def RunTests(args):
         cl.Name() for cl in browser_test_classes))
     return 1
 
-  test_class._typ_runner = typ_runner = typ.Runner()
+  typ_runner = typ.Runner()
 
   # Create test context.
   typ_runner.context = browser_test_context.TypTestContext()
@@ -255,6 +265,7 @@ def RunTests(args):
       test_class, options, extra_args)
   typ_runner.context.test_class = test_class
   typ_runner.context.expectations_files = options.expectations_files
+  typ_runner.context.disable_cloud_storage_io = options.disable_cloud_storage_io
   test_times = None
   if options.read_abbreviated_json_results_from:
     with open(options.read_abbreviated_json_results_from, 'r') as f:
@@ -265,6 +276,7 @@ def RunTests(args):
   typ_runner.args.all = options.all
   typ_runner.args.expectations_files = options.expectations_files
   typ_runner.args.jobs = options.jobs
+  typ_runner.args.stable_jobs = options.stable_jobs
   typ_runner.args.list_only = options.list_only
   typ_runner.args.metadata = options.metadata
   typ_runner.args.passthrough = options.passthrough
@@ -275,6 +287,7 @@ def RunTests(args):
   typ_runner.args.retry_limit = options.retry_limit
   typ_runner.args.retry_only_retry_on_failure_tests = (
       options.retry_only_retry_on_failure_tests)
+  typ_runner.args.typ_max_failures = options.typ_max_failures
   typ_runner.args.skip = options.skip
   typ_runner.args.suffixes = TEST_SUFFIXES
   typ_runner.args.tags = options.tags
@@ -286,6 +299,8 @@ def RunTests(args):
   typ_runner.args.write_full_results_to = options.write_full_results_to
   typ_runner.args.write_trace_to = options.write_trace_to
   typ_runner.args.disable_resultsink = options.disable_resultsink
+  typ_runner.args.rdb_content_output_file = options.rdb_content_output_file
+  typ_runner.args.use_global_pool = options.use_global_pool
 
   typ_runner.classifier = _GetClassifier(typ_runner)
   typ_runner.path_delimiter = test_class.GetJSONResultsDelimiter()
@@ -336,6 +351,9 @@ def RunTests(args):
 
 def _SetUpProcess(child, context):
   args = context.finder_options
+  # Make sure that we don't invoke cloud storage I/Os
+  if context.disable_cloud_storage_io:
+    os.environ[cloud_storage.DISABLE_CLOUD_STORAGE_IO] = '1'
   if binary_manager.NeedsInit():
     # On windows, typ doesn't keep the DependencyManager initialization in the
     # child processes.
@@ -348,10 +366,10 @@ def _SetUpProcess(child, context):
     args.remote_platform_options.device = (
         android_devices[child.worker_num-1].guid)
   browser_test_context._global_test_context = context
+  # typ will set this later as well, but set it earlier so that it's available
+  # in the test class process setup.
+  context.test_class.child = child
   context.test_class.SetUpProcess()
-  if child.has_expectations:
-    child.expectations.set_tags(
-        context.test_class._typ_runner.expectations.tags)
 
 
 def _TearDownProcess(child, context):

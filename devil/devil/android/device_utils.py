@@ -51,15 +51,20 @@ with devil_env.SysPath(devil_env.PY_UTILS_PATH):
   from py_utils import tempfile_ext
 
 try:
-  from devil.utils import reset_usb
+  # We can't group this import because we want to treat it as optional
+  from devil.utils import reset_usb  # pylint: disable=ungrouped-imports
 except ImportError:
   # Fail silently if we can't import reset_usb. We're likely on windows.
   reset_usb = None
 
 logger = logging.getLogger(__name__)
 
+_BOOT_TIMEOUT = 60
+_BOOT_RETRIES = 2
 _DEFAULT_TIMEOUT = 30
 _DEFAULT_RETRIES = 3
+
+
 # TODO(agrieve): Would be better to make this timeout based off of data size.
 # Needs to be large for remote devices & speed depends on internet connection.
 # Debug Chrome builds can be 200mb+.
@@ -99,17 +104,6 @@ _FILE_LIST_SCRIPT = """
       list_files "$dir"
     fi
   done
-"""
-
-_RESTART_ADBD_SCRIPT = """
-  trap '' HUP
-  trap '' TERM
-  trap '' PIPE
-  function restart() {
-    stop adbd
-    start adbd
-  }
-  restart &
 """
 
 _UNZIP_AND_CHMOD_SCRIPT = """
@@ -344,7 +338,7 @@ def _ParseModeString(mode_str):
   https://github.com/landley/toybox/blob/master/lib/lib.c#L896
   """
   if not _FILE_MODE_RE.match(mode_str):
-    raise ValueError('Unexpected file mode %r', mode_str)
+    raise ValueError('Unexpected file mode %r' % mode_str)
   mode = _FILE_MODE_KIND[mode_str[0]]
   for c, flag in zip(mode_str[1:], _FILE_MODE_PERMS):
     if c != '-' and c.islower():
@@ -367,11 +361,11 @@ def _JoinLines(lines):
   return ''.join(s for line in lines for s in (line, '\n'))
 
 
-def _CreateAdbWrapper(device):
+def _CreateAdbWrapper(device, **kwargs):
   if isinstance(device, adb_wrapper.AdbWrapper):
     return device
-  else:
-    return adb_wrapper.AdbWrapper(device)
+
+  return adb_wrapper.AdbWrapper(device, **kwargs)
 
 
 def _FormatPartialOutputError(output):
@@ -443,7 +437,7 @@ class DeviceUtils(object):
   _MAX_ADB_COMMAND_LENGTH = 512
   _MAX_ADB_OUTPUT_LENGTH = 32768
   _RESUMED_LAUNCHER_ACTIVITY_RE = re.compile(
-      r'\s*mResumedActivity.*(Launcher|launcher).*')
+      r'\s*(m|top)ResumedActivity.*(Launcher|launcher).*')
   _VALID_SHELL_VARIABLE = re.compile('^[a-zA-Z_][a-zA-Z0-9_]*$')
 
   LOCAL_PROPERTIES_PATH = posixpath.join('/', 'data', 'local.prop')
@@ -455,7 +449,8 @@ class DeviceUtils(object):
                device,
                enable_device_files_cache=False,
                default_timeout=_DEFAULT_TIMEOUT,
-               default_retries=_DEFAULT_RETRIES):
+               default_retries=_DEFAULT_RETRIES,
+               persistent_shell=False):
     """DeviceUtils constructor.
 
     Args:
@@ -467,10 +462,13 @@ class DeviceUtils(object):
         wait for an operation to complete if no explicit value is provided.
       default_retries: An integer containing the default number or times an
         operation should be retried on failure if no explicit value is provided.
+      persistent_shell: A boolean indicating if a persistent shell connection
+        should be used.
     """
     self.adb = None
     if isinstance(device, six.string_types):
-      self.adb = _CreateAdbWrapper(device)
+      self.adb = _CreateAdbWrapper(device, persistent_shell=persistent_shell)
+
     elif isinstance(device, adb_wrapper.AdbWrapper):
       self.adb = device
     else:
@@ -482,6 +480,7 @@ class DeviceUtils(object):
     self._cache = {}
     self._client_caches = {}
     self._cache_lock = threading.RLock()
+    self._apex_lock = threading.Lock()
     assert hasattr(self, decorators.DEFAULT_TIMEOUT_ATTR)
     assert hasattr(self, decorators.DEFAULT_RETRIES_ATTR)
 
@@ -643,7 +642,7 @@ class DeviceUtils(object):
     except device_errors.AdbCommandFailedError as e:
       if self.IsUserBuild():
         raise device_errors.RootUserBuildError(device_serial=str(self))
-      elif e.output and _WAIT_FOR_DEVICE_TIMEOUT_STR in e.output:
+      if e.output and _WAIT_FOR_DEVICE_TIMEOUT_STR in e.output:
         # adb 1.0.41 added a call to wait-for-device *inside* root
         # with a timeout that can be too short in some cases.
         # If we hit that timeout, ignore it & do our own wait below.
@@ -817,6 +816,26 @@ class DeviceUtils(object):
     return False
 
   @decorators.WithTimeoutAndRetriesFromInstance()
+  def IsSystemModuleInstalled(self,
+                              package,
+                              version_code,
+                              timeout=None,
+                              retries=None):
+    """
+    Checks the version for a mainline module to confirm if it is installed
+    """
+    dumpsys_output = self.RunShellCommand(['dumpsys', 'package', package],
+                                          check_return=True,
+                                          large_output=True)
+
+    expected_version_line = 'Version: %s' % version_code
+
+    for line in dumpsys_output:
+      if expected_version_line in line:
+        return True
+    return False
+
+  @decorators.WithTimeoutAndRetriesFromInstance()
   def GetApplicationPaths(self, package, timeout=None, retries=None):
     """Get the paths of the installed apks on the device for the given package.
 
@@ -861,10 +880,9 @@ class DeviceUtils(object):
       if bad_output:
         raise device_errors.CommandFailedError(
             'Unexpected pm path output: %r' % '\n'.join(output), str(self))
-      else:
-        logger.warning('pm returned no paths but the following warnings:')
-        for line in output:
-          logger.warning('- %s', line)
+      logger.warning('pm returned no paths but the following warnings:')
+      for line in output:
+        logger.warning('- %s', line)
     self._cache['package_apk_paths'][package] = list(apks)
     return apks
 
@@ -887,6 +905,11 @@ class DeviceUtils(object):
       line = line.strip()
       if line.startswith('versionName='):
         return line[len('versionName='):]
+      # From Android N onwards, we will still get a response back and have to
+      # search through it to confirm that the package didn't
+      # exist
+      if 'Unable to find package: %s' % package in line:
+        return None
     raise device_errors.CommandFailedError(
         'Version name for %s not found on dumpsys output' % package, str(self))
 
@@ -913,8 +936,7 @@ class DeviceUtils(object):
         # 10000 is the code used by Android for a pre-finalized SDK.
         if value == '10000':
           return self.GetProp('ro.build.version.codename', cache=True)
-        else:
-          return value
+        return value
     raise device_errors.CommandFailedError(
         'targetSdkVersion for %s not found on dumpsys output' % package,
         str(self))
@@ -1008,12 +1030,13 @@ class DeviceUtils(object):
           cmd, check_return=True, shell=True, timeout=timeout, retries=retries)
       self.PullFile(device_tmp_file.name, path)
 
-  @decorators.WithTimeoutAndRetriesFromInstance()
+  @decorators.WithTimeoutAndConditionalRetries(
+      adb_wrapper.ShouldRetryAfterAdbServerRestart)
   def WaitUntilFullyBooted(self,
                            wifi=False,
                            decrypt=False,
-                           timeout=None,
-                           retries=None):
+                           timeout=_BOOT_TIMEOUT,
+                           retries=_BOOT_RETRIES):
     """Wait for the device to fully boot.
 
     This means waiting for the device to boot, the package manager to be
@@ -1049,55 +1072,58 @@ class DeviceUtils(object):
         if self.GetProp('ro.product.model') not in ROCK960_DEVICE_LIST:
           return True
       except device_errors.CommandFailedError as e:
-        logging.warn('Failed to get product_model: %s', e)
+        logging.warning('Failed to get product_model: %s', e)
         return False
       except device_errors.DeviceUnreachableError:
-        logging.warn('Failed to get product_model: device unreachable')
+        logging.warning('Failed to get product_model: device unreachable')
         return False
 
       try:
         return self.GetProp('sys.usb.config') == 'adb'
       except device_errors.CommandFailedError as e:
-        logging.warn('Failed to get prop "sys.usb.config": %s', e)
+        logging.warning('Failed to get prop "sys.usb.config": %s', e)
         return False
       except device_errors.DeviceUnreachableError:
-        logging.warn('Failed to get prop "sys.usb.config": device unreachable')
+        logging.warning(
+            'Failed to get prop "sys.usb.config": device unreachable')
         return False
 
-    def sd_card_ready():
+    def is_sd_card_ready():
       try:
         self.RunShellCommand(
             ['test', '-d', self.GetExternalStoragePath()], check_return=True)
         return True
       except device_errors.DeviceUnreachableError:
-        logging.warn('Failed to check sd_card_ready: device unreachable')
+        logging.warning('Failed to check sd_card_ready: device unreachable')
         return False
       except device_errors.AdbCommandFailedError:
         return False
 
-    def pm_ready():
+    def is_pm_ready():
       try:
         return self._GetApplicationPathsInternal('android', skip_cache=True)
       except device_errors.DeviceUnreachableError:
-        logging.warn('Failed to check pm_ready: device unreachable')
+        logging.warning('Failed to check pm_ready: device unreachable')
         return False
       except device_errors.CommandFailedError:
         return False
 
-    def boot_completed():
+    def is_boot_completed():
       try:
-        return self.GetProp('sys.boot_completed', cache=False) == '1'
+        return any(
+            self.GetProp(prop, cache=False) == '1'
+            for prop in ('sys.boot_completed', 'dev.bootcomplete'))
       except device_errors.DeviceUnreachableError:
-        logging.warn('Failed to check boot_completed: device unreachable')
+        logging.warning('Failed to check boot_completed: device unreachable')
         return False
       except device_errors.CommandFailedError:
         return False
 
-    def wifi_enabled():
+    def is_wifi_enabled():
       return 'Wi-Fi is enabled' in self.RunShellCommand(['dumpsys', 'wifi'],
                                                         check_return=False)
 
-    def decryption_completed():
+    def is_decryption_completed():
       try:
         decrypt = self.GetProp('vold.decrypt', cache=False)
         # The prop "void.decrypt" will only be set when the device uses
@@ -1107,20 +1133,21 @@ class DeviceUtils(object):
         #    file-based encryption (FBE).
         #  - or the prop has value "trigger_restart_framework", which means
         #    the decription is finished.
-        return decrypt == '' or decrypt == 'trigger_restart_framework'
+        return decrypt in ('', 'trigger_restart_framework')
       except device_errors.CommandFailedError:
         return False
 
     self.adb.WaitForDevice()
+    # Check that the device has booted
+    timeout_retry.WaitFor(is_boot_completed)
     # Rock960 devices connected twice. Wait for device ready.
     timeout_retry.WaitFor(is_device_connection_ready)
-    timeout_retry.WaitFor(sd_card_ready)
-    timeout_retry.WaitFor(pm_ready)
-    timeout_retry.WaitFor(boot_completed)
+    timeout_retry.WaitFor(is_sd_card_ready)
+    timeout_retry.WaitFor(is_pm_ready)
     if wifi:
-      timeout_retry.WaitFor(wifi_enabled)
+      timeout_retry.WaitFor(is_wifi_enabled)
     if decrypt:
-      timeout_retry.WaitFor(decryption_completed)
+      timeout_retry.WaitFor(is_decryption_completed)
 
   REBOOT_DEFAULT_TIMEOUT = 10 * _DEFAULT_TIMEOUT
 
@@ -1183,7 +1210,9 @@ class DeviceUtils(object):
               retries=None,
               modules=None,
               fake_modules=None,
-              additional_locales=None):
+              additional_locales=None,
+              instant_app=False,
+              force_queryable=False):
     """Install an APK or app bundle.
 
     Noop if an identical APK is already installed. If installing a bundle, the
@@ -1192,10 +1221,10 @@ class DeviceUtils(object):
 
     Args:
       apk: An ApkHelper instance or string containing the path to the APK or
-        bundle.
+          bundle.
       allow_downgrade: A boolean indicating if we should allow downgrades.
       reinstall: A boolean indicating if we should keep any existing app data.
-        Ignored if |apk| is a bundle.
+          Ignored if |apk| is a bundle.
       permissions: Set of permissions to set. If not set, finds permissions with
           apk helper. To set no permissions, pass [].
       timeout: timeout in seconds
@@ -1207,12 +1236,20 @@ class DeviceUtils(object):
           rather than installed. Thus the app can emulate SplitCompat while
           running. This should not have any overlap with |modules|.
       additional_locales: An iterable with additional locales to install for a
-        bundle.
+          bundle.
+      instant_app: A boolean that selects if the APK should be installed as an
+          instant app or not. Instant apps are installed in a more
+          restrictive execution environment. - Supported from SDK 29
+      force_queryable: A boolean that allows the installed application to be
+        queryable by all other applications regardless of if they have declared
+        the package as queryable in their manifests - Supported from SDK 30
 
     Raises:
       CommandFailedError if the installation fails.
       CommandTimeoutError if the installation times out.
       DeviceUnreachableError on missing device.
+      DeviceVersionError if the device SDK level does not support instant
+        apps or forcing queryable
     """
     apk = apk_helper.ToHelper(apk)
     modules_set = set(modules or [])
@@ -1231,12 +1268,89 @@ class DeviceUtils(object):
         apk_paths_to_install = [p for p in apk_paths if p not in fake_apk_paths]
       else:
         apk_paths_to_install = apk_paths
-      self._InstallInternal(
-          apk,
-          apk_paths_to_install,
-          allow_downgrade=allow_downgrade,
-          reinstall=reinstall,
-          permissions=permissions)
+      self._InstallInternal(apk,
+                            apk_paths_to_install,
+                            allow_downgrade=allow_downgrade,
+                            reinstall=reinstall,
+                            permissions=permissions,
+                            instant_app=instant_app,
+                            force_queryable=force_queryable)
+
+  @decorators.WithTimeoutAndRetriesFromInstance(
+      min_default_timeout=INSTALL_DEFAULT_TIMEOUT)
+  def InstallApex(self, apex, timeout=None, retries=None):
+    """
+    Installs a mainline module and manages rebooting the device. Can only be
+    used from Android 10 onwards with devices that have the correct
+    kernal support.
+
+    Args:
+      base_apk: The path to an apex file
+      timeout: timeout in seconds
+      retries: number of retries
+
+    Raises:
+      CommandFailedError if the installation fails
+      DeviceVersionError if the device SDK level does not support
+        mainline modules
+    """
+
+    self._CheckSdkLevel(version_codes.Q)
+
+    apex = apk_helper.ToHelper(apex)
+    package_name = apex.GetPackageName()
+    version = apex.GetVersionCode()
+
+    # Only one module can be installed at a time so
+    # we use a lock to prevent two parallel InstallApex calls
+    # because the device needs to reboot before it is safe to
+    # install another module
+    with self._apex_lock:
+      with apex.GetApkPaths(self) as apex_file_paths:
+        if len(apex_file_paths) != 1:
+          raise device_errors.CommandFailedError(
+              'Expected one apex path but received: %s' %
+              pprint.pformat(apex_file_paths))
+
+        apex_file_path = apex_file_paths[0]
+
+        if not os.path.exists(apex_file_path):
+          raise device_errors.CommandFailedError(
+              'Attempted to install non-existent apex: %s' % apex_file_path)
+
+        logger.info('Installing module %s using apex %s', package_name,
+                    apex_file_path)
+
+        try:
+          self.adb.Install(apex_file_path)
+        except device_errors.AdbCommandFailedError as adb_error:
+          # If the device already has a module staged, it is in an unexpected
+          # state We will throw an error to allow the developer to work out
+          # how to deal with this
+          # While ADB will already throw this, it will be a little harder
+          # to debug what is happening
+          if 'Cannot stage multiple sessions without checkpoint support' in str(
+              adb_error):
+            raise device_errors.CommandFailedError(
+                'Apex module is already staged - the device must be restarted')
+          # Even though we do a SDK version check, the device could still not
+          # support APEX files because they have further kernal requirements
+          # that aren't necessarily enforced in Android 10
+          if "device doesn't support the installation of APEX" in str(
+              adb_error):
+            raise device_errors.CommandFailedError(
+                'The device used does not support installing apex files')
+          raise adb_error
+
+      logger.info('Rebooting device')
+      self.Reboot()
+
+    if not self.IsSystemModuleInstalled(package_name, version):
+      raise device_errors.CommandFailedError(
+          'Module %s with version %s not installed on device after rebooting '
+          'install attempt.' % (package_name, version))
+
+    logger.info('Apex %s installed', package_name)
 
   @staticmethod
   def _GetFakeInstallPaths(apk_paths, fake_modules):
@@ -1298,7 +1412,9 @@ class DeviceUtils(object):
                       allow_cached_props=False,
                       permissions=None,
                       timeout=None,
-                      retries=None):
+                      retries=None,
+                      instant_app=False,
+                      force_queryable=False):
     """Install a split APK.
 
     Noop if all of the APK splits are already installed.
@@ -1314,29 +1430,40 @@ class DeviceUtils(object):
           apk helper. To set no permissions, pass [].
       timeout: timeout in seconds
       retries: number of retries
+      instant_app: A boolean that selects if the APK should be installed as an
+          instant app or not. Instant apps are installed in a more
+          restrictive execution environment. - Supported from SDK 29
+      force_queryable: A boolean that allows the installed application to be
+        queryable by all other applications regardless of if they have declared
+        the package as queryable in their manifests - Supported from SDK 30
 
     Raises:
       CommandFailedError if the installation fails.
       CommandTimeoutError if the installation times out.
       DeviceUnreachableError on missing device.
       DeviceVersionError if device SDK is less than Android L.
+      DeviceVersionError if the device SDK level does not support instant
+        apps or forcing queryable
     """
     apk = apk_helper.ToSplitHelper(base_apk, split_apks)
     with apk.GetApkPaths(
         self, allow_cached_props=allow_cached_props) as apk_paths:
-      self._InstallInternal(
-          apk,
-          apk_paths,
-          reinstall=reinstall,
-          permissions=permissions,
-          allow_downgrade=allow_downgrade)
+      self._InstallInternal(apk,
+                            apk_paths,
+                            reinstall=reinstall,
+                            permissions=permissions,
+                            allow_downgrade=allow_downgrade,
+                            instant_app=instant_app,
+                            force_queryable=force_queryable)
 
   def _InstallInternal(self,
                        apk,
                        apk_paths,
                        allow_downgrade=False,
                        reinstall=False,
-                       permissions=None):
+                       permissions=None,
+                       instant_app=False,
+                       force_queryable=False):
     if not apk_paths:
       raise device_errors.CommandFailedError('Did not get any APKs to install')
 
@@ -1373,9 +1500,14 @@ class DeviceUtils(object):
       if apks_to_install and not reinstall:
         apks_to_install = apk_paths
 
-    if device_apk_paths and apks_to_install and not reinstall:
-      logger.info('Uninstalling package %s', package_name)
-      self.Uninstall(package_name)
+    if device_apk_paths and not reinstall:
+      if apks_to_install:
+        logger.info('Uninstalling package %s', package_name)
+        self.Uninstall(package_name)
+      else:
+        # Running adb uninstall clears the data, so to be consistent, we
+        # explicitly clear it when skipping the uninstall.
+        self.ClearApplicationState(package_name)
 
     if apks_to_install:
       # Assume that we won't know the resulting device state.
@@ -1388,18 +1520,20 @@ class DeviceUtils(object):
       logger.info('Installing package %s using APKs %s',
                   package_name, apks_to_install)
       if len(apks_to_install) > 1 or partial:
-        self.adb.InstallMultiple(
-            apks_to_install,
-            partial=partial,
-            reinstall=reinstall,
-            streaming=streaming,
-            allow_downgrade=allow_downgrade)
+        self.adb.InstallMultiple(apks_to_install,
+                                 partial=partial,
+                                 reinstall=reinstall,
+                                 streaming=streaming,
+                                 allow_downgrade=allow_downgrade,
+                                 instant_app=instant_app,
+                                 force_queryable=force_queryable)
       else:
-        self.adb.Install(
-            apks_to_install[0],
-            reinstall=reinstall,
-            streaming=streaming,
-            allow_downgrade=allow_downgrade)
+        self.adb.Install(apks_to_install[0],
+                         reinstall=reinstall,
+                         streaming=streaming,
+                         allow_downgrade=allow_downgrade,
+                         instant_app=instant_app,
+                         force_queryable=force_queryable)
     else:
       logger.info('Skipping installation of package %s', package_name)
       # Running adb install terminates running instances of the app, so to be
@@ -1550,18 +1684,16 @@ class DeviceUtils(object):
       except device_errors.AdbCommandFailedError as exc:
         if check_return:
           raise
-        else:
-          return exc.output
+        return exc.output
 
     def handle_large_command(cmd):
       if len(cmd) < self._MAX_ADB_COMMAND_LENGTH:
         return handle_check_return(cmd)
-      else:
-        with device_temp_file.DeviceTempFile(self.adb, suffix='.sh') as script:
-          self._WriteFileWithPush(script.name, cmd)
-          logger.debug('Large shell command will be run from file: %s ...',
-                       cmd[:self._MAX_ADB_COMMAND_LENGTH])
-          return handle_check_return('sh %s' % script.name_quoted)
+      with device_temp_file.DeviceTempFile(self.adb, suffix='.sh') as script:
+        self._WriteFileWithPush(script.name, cmd)
+        logger.debug('Large shell command will be run from file: %s ...',
+                     cmd[:self._MAX_ADB_COMMAND_LENGTH])
+        return handle_check_return('sh %s' % script.name_quoted)
 
     def handle_large_output(cmd, large_output_mode):
       if large_output_mode:
@@ -1590,8 +1722,7 @@ class DeviceUtils(object):
             logger.warning('Use RunShellCommand(..., large_output=True) for '
                            'shell commands that expect a lot of output.')
             return handle_large_output(cmd, True)
-          else:
-            raise
+          raise
 
     if isinstance(cmd, six.string_types):
       if not shell:
@@ -1623,13 +1754,11 @@ class DeviceUtils(object):
     if single_line:
       if not output:
         return ''
-      elif len(output) == 1:
+      if len(output) == 1:
         return output[0]
-      else:
-        msg = 'one line of output was expected, but got: %s'
-        raise device_errors.CommandFailedError(msg % output, str(self))
-    else:
-      return output
+      msg = 'one line of output was expected, but got: %s'
+      raise device_errors.CommandFailedError(msg % output, str(self))
+    return output
 
   def _RunPipedShellCommand(self, script, **kwargs):
     PIPESTATUS_LEADER = 'PIPESTATUS: '
@@ -1695,10 +1824,9 @@ class DeviceUtils(object):
     if not processes:
       if quiet:
         return 0
-      else:
-        raise device_errors.CommandFailedError(
-            'No processes matching %r (exact=%r)' % (process_name, exact),
-            str(self))
+      raise device_errors.CommandFailedError(
+          'No processes matching %r (exact=%r)' % (process_name, exact),
+          str(self))
 
     logger.info('KillAll(%r, ...) attempting to kill the following:',
                 process_name)
@@ -1871,6 +1999,40 @@ class DeviceUtils(object):
       timeout_retry.WaitFor(dismiss_popups, wait_period=1)
 
   @decorators.WithTimeoutAndRetriesFromInstance()
+  def Unlock(self, timeout=None, retries=None):
+    """Wakes up the device screen and unlocks (if not PIN protected).
+
+    This is a NOOP if the device screen is already unlocked.
+
+    Args:
+      timeout: timeout in seconds
+      retries: number of retries
+
+    Raises:
+      CommandFailedError if device cannot be unlocked (ex. if PIN protected).
+      CommandTimeoutError on timeout.
+      DeviceUnreachableError on missing device.
+    """
+    # Must wake up the screen before unlocking. This is a NOOP if already awake.
+    self.SendKeyEvent(keyevent.KEYCODE_WAKEUP)
+
+    def is_screen_locked():
+      lines = self.RunShellCommand(['dumpsys', 'nfc'])
+      screen_locked = False
+      screen_locked_pattern = re.compile(r'mScreenState=.*\bON_LOCKED$')
+      for line in lines:
+        if screen_locked_pattern.match(line):
+          screen_locked = True
+          break
+      return screen_locked
+
+    if is_screen_locked():
+      self.SendKeyEvent(keyevent.KEYCODE_MENU)
+      if is_screen_locked():
+        raise device_errors.CommandFailedError('Screen is still locked. Is the '
+                                               'device password protected?')
+
+  @decorators.WithTimeoutAndRetriesFromInstance()
   def ForceStop(self, package, timeout=None, retries=None):
     """Close the application.
 
@@ -1891,7 +2053,8 @@ class DeviceUtils(object):
                             package,
                             permissions=None,
                             timeout=None,
-                            retries=None):
+                            retries=None,
+                            wait_for_asynchronous_intent=False):
     """Clear all state for the given package.
 
     Args:
@@ -1899,6 +2062,9 @@ class DeviceUtils(object):
       permissions: List of permissions to set after clearing data.
       timeout: timeout in seconds
       retries: number of retries
+      wait_for_asynchronous_intent: Wait for the asynchronous MediaProvider
+          intent to finish before returning. This intent can end up deleting
+          data after this function returns if not waited for.
 
     Raises:
       CommandTimeoutError on timeout.
@@ -1909,8 +2075,62 @@ class DeviceUtils(object):
     # may never return.
     if ((self.build_version_sdk >= version_codes.JELLY_BEAN_MR2)
         or self._GetApplicationPathsInternal(package)):
+      last_timestamp = None
+      if wait_for_asynchronous_intent:
+        # Figure out what the last log line's timestamp was so we can be sure we
+        # wait for the right thing later.
+        logcat_output = self.RunShellCommand(
+            ['logcat', '--format=year', '-t', '1'], check_return=True)
+        # We only request one line, but logcat outputs a line indicating where
+        # output is coming from first, so don't assume the first line is
+        # actually what we want.
+        last_timestamp = logcat_output[-1]
+        # Logcat format as requested is "YYYY-MM-DD HH:MM:SS.MS ...", so we only
+        # care about the first two space-separated fields.
+        split_timestamp = last_timestamp.split()
+        # We could convert this to an actual timestamp, but string comparison
+        # should work fine for our purposes.
+        last_timestamp = '%s %s' % (split_timestamp[0], split_timestamp[1])
+
       self.RunShellCommand(['pm', 'clear', package], check_return=True)
       self.GrantPermissions(package, permissions)
+
+      if wait_for_asynchronous_intent:
+
+        def intent_test():
+          # We look for a MediaProvider intent end related to clearing our
+          # package that's newer than the last timestamp before we requested the
+          # clear.
+          # LogcatMonitor already has a WaitFor that accepts a regex, but it
+          # does not work well for this since we need to ensure that the found
+          # line is new.
+          # Sample line that we expect back as a result (line breaks added for
+          # readability):
+          # 12-08 04:41:18.543  3479  4356 I MediaProvider: End Intent {
+          #   act=android.intent.action.PACKAGE_DATA_CLEARED
+          #   dat=package:org.chromium.chrome
+          #   flg=0x1000010
+          #   cmp=com.google.android.providers.media.module/
+          #     com.android.providers.media.MediaService (has extras) }
+          intent_end_regex = (
+              r'End Intent.*android.intent.action.PACKAGE_DATA_CLEARED.*' +
+              package)
+          logcat_output = self.RunShellCommand([
+              'logcat',
+              '-d',
+              '-s',
+              '--format=year',
+              '--regex=%s' % intent_end_regex,
+              'MediaProvider:I',
+          ],
+                                               check_return=True)
+          for line in logcat_output:
+            # Avoid any non-log output like "--------- beginning of main".
+            if 'MediaProvider' in line and line > last_timestamp:
+              return True
+          return False
+
+        timeout_retry.WaitFor(intent_test, wait_period=2, max_tries=15)
 
   @decorators.WithTimeoutAndRetriesFromInstance()
   def SendKeyEvent(self, keycode, timeout=None, retries=None):
@@ -1936,7 +2156,9 @@ class DeviceUtils(object):
                        host_device_tuples,
                        delete_device_stale=False,
                        timeout=None,
-                       retries=None):
+                       retries=None,
+                       run_as=None,
+                       as_root=False):
     """Push files to the device, skipping files that don't need updating.
 
     When a directory is pushed, it is traversed recursively on the host and
@@ -1952,6 +2174,10 @@ class DeviceUtils(object):
       delete_device_stale: option to delete stale files on device
       timeout: timeout in seconds
       retries: number of retries
+      run_as: A string containing the package as which the command should be
+        run.
+      as_root: A boolean indicating whether the shell command should be run
+        with root privileges.
 
     Raises:
       CommandFailedError on failure.
@@ -1978,7 +2204,9 @@ class DeviceUtils(object):
     if changed_files:
       if missing_dirs:
         self.RunShellCommand(['mkdir', '-p'] + list(missing_dirs),
-                             check_return=True)
+                             check_return=True,
+                             run_as=run_as,
+                             as_root=as_root)
       self._PushFilesImpl(host_device_tuples, changed_files)
     cache_commit_func()
 
@@ -2097,12 +2325,10 @@ class DeviceUtils(object):
       # Need to compute all checksums when caching.
       if self._enable_device_files_cache:
         return md5sum.CalculateHostMd5Sums([t[0] for t in file_tuples])
-      else:
-        return md5sum.CalculateHostMd5Sums(
-            [t[0] for t in possibly_stale_tuples])
+      return md5sum.CalculateHostMd5Sums([t[0] for t in possibly_stale_tuples])
 
     def calculate_device_checksums():
-      paths = set([t[1] for t in possibly_stale_tuples])
+      paths = {t[1] for t in possibly_stale_tuples}
       if not paths:
         return dict()
       sums = dict()
@@ -2201,10 +2427,12 @@ class DeviceUtils(object):
         len(host_device_tuples), dir_file_count, dir_size, False)
     zip_duration = self._ApproximateDuration(1, 1, size, True)
 
+    # TODO(https://crbug.com/1338098): Resume directory pushing once
+    # clients have switched to 1.0.36-compatible syntax.
+    # pylint: disable=condition-evals-to-constant
     if (dir_push_duration < push_duration and dir_push_duration < zip_duration
-        # TODO(jbudorick): Resume directory pushing once clients have switched
-        # to 1.0.36-compatible syntax.
         and False):
+      # pylint: enable=condition-evals-to-constant
       self._PushChangedFilesIndividually(host_device_tuples)
     elif push_duration < zip_duration:
       self._PushChangedFilesIndividually(files)
@@ -2515,12 +2743,9 @@ class DeviceUtils(object):
             self.RunShellCommand(['cat', device_path],
                                  as_root=as_root,
                                  check_return=True))
-      else:
-        with self._CopyToReadableLocation(device_path) as readable_temp_file:
-          return self._ReadFileWithPull(readable_temp_file.name,
-                                        encoding, errors)
-    else:
-      return self._ReadFileWithPull(device_path, encoding, errors)
+      with self._CopyToReadableLocation(device_path) as readable_temp_file:
+        return self._ReadFileWithPull(readable_temp_file.name, encoding, errors)
+    return self._ReadFileWithPull(device_path, encoding, errors)
 
   def _WriteFileWithPush(self, device_path, contents):
     with tempfile.NamedTemporaryFile(mode='w+') as host_temp:
@@ -2535,7 +2760,8 @@ class DeviceUtils(object):
                 as_root=False,
                 force_push=False,
                 timeout=None,
-                retries=None):
+                retries=None,
+                run_as=None):
     """Writes |contents| to a file on the device.
 
     Args:
@@ -2560,7 +2786,11 @@ class DeviceUtils(object):
       # a shell command rather than pushing a file.
       cmd = 'echo -n %s > %s' % (cmd_helper.SingleQuote(contents),
                                  cmd_helper.SingleQuote(device_path))
-      self.RunShellCommand(cmd, shell=True, as_root=as_root, check_return=True)
+      self.RunShellCommand(cmd,
+                           shell=True,
+                           as_root=as_root,
+                           run_as=run_as,
+                           check_return=True)
     elif as_root and self.NeedsSU():
       # Adb does not allow to "push with su", so we first push to a temp file
       # on a safe location, and then copy it to the desired location with su.
@@ -2799,8 +3029,7 @@ class DeviceUtils(object):
     if new_value != value:
       self.SetProp(self.JAVA_ASSERT_PROPERTY, new_value)
       return True
-    else:
-      return False
+    return False
 
   def GetLocale(self, cache=False):
     """Returns the locale setting on the device.
@@ -3157,16 +3386,15 @@ class DeviceUtils(object):
       if pattern:
         return self._RunPipedShellCommand(
             '%s | grep -F %s' % (ps_cmd, cmd_helper.SingleQuote(pattern)))
-      else:
-        return self.RunShellCommand(
-            ps_cmd.split(), check_return=True, large_output=True)
+      return self.RunShellCommand(ps_cmd.split(),
+                                  check_return=True,
+                                  large_output=True)
     except device_errors.AdbShellCommandFailedError as e:
       if e.status and isinstance(e.status, list) and not e.status[0]:
         # If ps succeeded but grep failed, there were no processes with the
         # given name.
         return []
-      else:
-        raise
+      raise
 
   @decorators.WithTimeoutAndRetriesFromInstance()
   def ListProcesses(self, process_name=None, timeout=None, retries=None):
@@ -3215,16 +3443,14 @@ class DeviceUtils(object):
         cmd = ' '.join(cmd_helper.SingleQuote(s) for s in cmd)
         return self._RunPipedShellCommand(
             '%s | grep -F %s' % (cmd, cmd_helper.SingleQuote(pattern)))
-      else:
-        cmd = ['dumpsys'] + extra_args
-        return self.RunShellCommand(cmd, check_return=True, large_output=True)
+      cmd = ['dumpsys'] + extra_args
+      return self.RunShellCommand(cmd, check_return=True, large_output=True)
     except device_errors.AdbShellCommandFailedError as e:
       if e.status and isinstance(e.status, list) and not e.status[0]:
         # If dumpsys succeeded but grep failed, there were no lines matching
         # the given pattern.
         return []
-      else:
-        raise
+      raise
 
   @decorators.WithTimeoutAndRetriesFromInstance()
   def GetUidForPackage(self, package_name, timeout=None, retries=None):
@@ -3250,6 +3476,7 @@ class DeviceUtils(object):
     user_id = _USER_ID_RE.sub('', dumpsys_output[0])
     if user_id:
       return user_id
+    return None
 
   # TODO(#4103): Remove after migrating clients to ListProcesses.
   @decorators.WithTimeoutAndRetriesFromInstance()
@@ -3317,8 +3544,7 @@ class DeviceUtils(object):
                                                              pids),
             device_serial=str(self))
       return pids[0] if pids else None
-    else:
-      return pids
+    return pids
 
   @decorators.WithTimeoutAndRetriesFromInstance()
   def GetEnforce(self, timeout=None, retries=None):
@@ -3402,8 +3628,7 @@ class DeviceUtils(object):
         result['CurrentWebViewPackage'] = None
       match = re.search(_WEBVIEW_SYSUPDATE_FALLBACK_LOGIC_RE, line)
       if match:
-        result['FallbackLogicEnabled'] = \
-            True if match.group(1) == 'true' else False
+        result['FallbackLogicEnabled'] = match.group(1) == 'true'
       match = re.search(_WEBVIEW_SYSUPDATE_PACKAGE_INSTALLED_RE, line)
       if match:
         package_name = match.group(1)
@@ -3472,12 +3697,11 @@ class DeviceUtils(object):
                 '%s targets a finalized SDK (%r), but valid WebView providers '
                 'must target a pre-finalized SDK (%r) on this device' %
                 (package_name, app_target_sdk_version, codename), str(self))
-          else:
-            raise device_errors.CommandFailedError(
-                '%s has targetSdkVersion %r, but valid WebView providers must '
-                'target >= %r on this device' %
-                (package_name, app_target_sdk_version, self.build_version_sdk),
-                str(self))
+          raise device_errors.CommandFailedError(
+              '%s has targetSdkVersion %r, but valid WebView providers must '
+              'target >= %r on this device' %
+              (package_name, app_target_sdk_version, self.build_version_sdk),
+              str(self))
         if re.search(r'Version code too low', reason):
           raise device_errors.CommandFailedError(
               '%s needs a higher versionCode (must be >= %d)' %
@@ -3738,8 +3962,7 @@ class DeviceUtils(object):
     devices = [d if isinstance(d, cls) else cls(d) for d in devices]
     if asyn:
       return parallelizer.Parallelizer(devices)
-    else:
-      return parallelizer.SyncParallelizer(devices)
+    return parallelizer.SyncParallelizer(devices)
 
   @classmethod
   def HealthyDevices(cls,
@@ -3748,6 +3971,7 @@ class DeviceUtils(object):
                      retries=1,
                      enable_usb_resets=False,
                      abis=None,
+                     persistent_shell=False,
                      **kwargs):
     """Returns a list of DeviceUtils instances.
 
@@ -3778,6 +4002,9 @@ class DeviceUtils(object):
           those that appear to be android devices.
       abis: A list of ABIs for which the device needs to support at least one of
           (optional). See devil.android.ndk.abis for valid values.
+      persistent_shell: Makes AdbWrapper pipe commands through a single
+          "adb shell" instead of spawning a new shell each invocation. Can
+          save a lot of time as adb shell startup can be nearly 100ms.
       A device serial, or a list of device serials (optional).
 
     Returns:
@@ -3795,7 +4022,7 @@ class DeviceUtils(object):
       device_arg = ()
 
     select_multiple = True
-    if not (isinstance(device_arg, tuple) or isinstance(device_arg, list)):
+    if not isinstance(device_arg, (list, tuple)):
       select_multiple = False
       if device_arg:
         device_arg = (device_arg, )
@@ -3823,7 +4050,8 @@ class DeviceUtils(object):
         devices = [cls(x, **kwargs) for x in device_arg if not denylisted(x)]
       else:
         devices = []
-        for adb in adb_wrapper.AdbWrapper.Devices():
+        for adb in adb_wrapper.AdbWrapper.Devices(
+            persistent_shell=persistent_shell):
           serial = adb.GetDeviceSerial()
           if not denylisted(serial):
             device = cls(_CreateAdbWrapper(adb), **kwargs)
@@ -3865,7 +4093,7 @@ class DeviceUtils(object):
         if attempt == retries:
           logging.error('No devices found after exhausting all retries.')
           raise
-        elif attempt == retries - 1 and enable_usb_resets:
+        if attempt == retries - 1 and enable_usb_resets:
           logging.warning(
               'Attempting to reset relevant USB devices prior to the last '
               'attempt.')
@@ -3881,12 +4109,12 @@ class DeviceUtils(object):
   @decorators.WithTimeoutAndRetriesFromInstance()
   def RestartAdbd(self, timeout=None, retries=None):
     logger.info('Restarting adbd on device.')
-    with device_temp_file.DeviceTempFile(self.adb, suffix='.sh') as script:
-      self.WriteFile(script.name, _RESTART_ADBD_SCRIPT)
-      self.RunShellCommand(['source', script.name],
-                           check_return=True,
-                           as_root=True)
-      self.adb.WaitForDevice()
+    self.RunShellCommand(['setprop', 'ctl.restart', 'adbd'],
+                         check_return=False,
+                         as_root=True)
+    # Need to kill persistent shells as the restart kills the connection.
+    self.adb.KillAllPersistentAdbs()
+    self.adb.WaitForDevice()
 
   @decorators.WithTimeoutAndRetriesFromInstance()
   def GrantPermissions(self, package, permissions, timeout=None, retries=None):

@@ -39,6 +39,11 @@ OAUTH_CLIENT_ID_ALLOWLIST = [
     # luci-auth command.
     '446450136466-2hr92jrq8e6i4tnsa56b52vacp7t3936.apps.googleusercontent.com',
 ]
+if utils.IsStagingEnvironment():
+  OAUTH_CLIENT_ID_ALLOWLIST = [
+      # Staging oauth client id for Pinpoint.
+      '22573382977-u263jlijs2uiio0uq7qm7vso3vuh7ec5.apps.googleusercontent.com'
+  ]
 
 
 class ApiAuthException(Exception):
@@ -48,18 +53,24 @@ class ApiAuthException(Exception):
 class OAuthError(ApiAuthException):
 
   def __init__(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(OAuthError, self).__init__('User authentication error')
 
 
 class NotLoggedInError(ApiAuthException):
 
   def __init__(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(NotLoggedInError, self).__init__('User not authenticated')
 
 
 class InternalOnlyError(ApiAuthException):
 
   def __init__(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(InternalOnlyError, self).__init__('User does not have access')
 
 

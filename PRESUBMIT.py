@@ -7,8 +7,11 @@
 See https://www.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details about the presubmit API built into depot_tools.
 """
+
 import re
 import sys
+
+USE_PYTHON3 = True
 
 _EXCLUDED_PATHS = (
     r'(.*[\\/])?\.git[\\/].*',
@@ -48,7 +51,8 @@ _EXCLUDED_PATHS = (
 
 _GITHUB_BUG_ID_RE = re.compile(r'#[1-9]\d*')
 _MONORAIL_BUG_ID_RE = re.compile(r'[1-9]\d*')
-_MONORAIL_PROJECT_NAMES = frozenset({'chromium', 'v8', 'angleproject', 'skia'})
+_MONORAIL_PROJECT_NAMES = frozenset(
+    {'chromium', 'v8', 'angleproject', 'skia', 'dawn'})
 
 def CheckChangeLogBug(input_api, output_api):
   # Show a presubmit message if there is no Bug line or an empty Bug line.
@@ -126,7 +130,7 @@ def CheckChangeOnUpload(input_api, output_api):
   results = CheckChange(input_api, output_api)
   cwd = input_api.PresubmitLocalPath()
   exit_code = input_api.subprocess.call(
-      [input_api.python_executable, 'generate_telemetry_build.py', '--check'],
+      [input_api.python3_executable, 'generate_telemetry_build.py', '--check'],
       cwd=cwd)
   if exit_code != 0:
     results.append(output_api.PresubmitError(

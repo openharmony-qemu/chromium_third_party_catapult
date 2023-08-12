@@ -72,7 +72,7 @@ def GetPlatformForDevice(device, finder_options, logging=real_logging):
     raise
 
 
-class Platform(object):
+class Platform():
   """The platform that the target browser is running on.
 
   Provides a limited interface to interact with the platform itself, where
@@ -333,7 +333,6 @@ class Platform(object):
 
   def SetHTTPServerDirectories(self, paths, handler_class=None):
     """Returns True if the HTTP server was started, False otherwise."""
-    # pylint: disable=redefined-variable-type
     if isinstance(paths, six.string_types):
       paths = {paths}
     paths = set(os.path.realpath(p) for p in paths)
@@ -379,7 +378,9 @@ class Platform(object):
     # TODO(https://crbug.com/1014670): Remove once debug flags supported in
     # Fuchsia browsers.
     if self._platform_backend.GetOSName() == 'fuchsia':
-      self._platform_backend.forwarder_factory.Create(server.port, server.port)
+      self._forwarder = (
+          self._platform_backend.forwarder_factory.Create(server.port,
+                                                          server.port))
     return True
 
   def StopAllLocalServers(self):

@@ -21,6 +21,8 @@ CHROMIUM_URL = 'https://chromium.googlesource.com/chromium/src'
 class TestCase(testing_common.TestCase):
 
   def setUp(self):
+    # TODO(https://crbug.com/1262292): Change to super() after Python2 trybots retire.
+    # pylint: disable=super-with-arguments
     super(TestCase, self).setUp()
     self._SetUpTestApp()
     self._SetUpStubs()
@@ -30,6 +32,7 @@ class TestCase(testing_common.TestCase):
   def _SetUpTestApp(self):
     self.testapp = webtest.TestApp(dispatcher.APP)
     self.testapp.extra_environ.update({'REMOTE_ADDR': 'remote_ip'})
+    self.testapp.extra_environ.update({'APPLICATION_ID': 'testbed-test'})
 
   def _SetUpStubs(self):
     patcher = mock.patch('dashboard.services.gitiles_service.CommitInfo')

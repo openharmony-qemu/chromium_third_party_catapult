@@ -27,6 +27,7 @@ class ListTimeseriesHandler(api_request_handler.ApiRequestHandler):
     Outputs:
       JSON list of monitored timeseries for the benchmark, see README.md.
     """
+    utils.LogObsoleteHandlerUsage(self, 'POST')
     del kwargs  # Unused.
     benchmark = args[0]
     sheriff_name = self.request.get('sheriff', 'Chromium Perf Sheriff')
