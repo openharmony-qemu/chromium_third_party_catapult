@@ -1,10 +1,10 @@
 [
     {
         "Name": "chromium_third_party_catapult",                   # 上游开源软件名全称
-        "License": "LGPLStyleLicense","BSDStyleLicense|GPLStyleLicense","GPLStyleLicense","GPL-2.0+","JSON","ADSL","zlib-acknowledgement","LGPL-3.0+"," MPL-2.0","Khronos License",         # 上游开源软件中包含的许可证信息
+        "License": "LGPLStyleLicense","BSDStyleLicense","GPLStyleLicense","GPL-2.0+","JSON","ADSL","zlib-acknowledgement","LGPL-3.0+"," MPL-2.0","Public Domain Disclaimer","CC0-1.0","MPL-1.1","Proprietary License"         # 上游开源软件中包含的许可证信息
         "License File": "LICENSE"     # 许可证所在文件路径
         "Version Number": "8bc3659ded63d583750adfe835da1cf0612c79ca",
         "Upstream URL": "https://chromium.googlesource.com/catapult.git@8bc3659ded63d583750adfe835da1cf0612c79ca",   # 上游软件包发布地址
-        "Description": "第三方软件vulkan-deps/glslang"           # 开源软件功能描述
+        "Description": "Catapult 是Chrome/Chromium/Chromium OS所使用的一系列性能工具的组合"           # 开源软件功能描述
     }
 ]
