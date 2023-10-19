@@ -166,9 +166,9 @@ used to filter file path.
             <filteritem type="filepath" name="third_party/requests_toolbelt/requests_toolbelt/_compat.py"
                 desc="chromuim原生文件无license" />
             <filteritem type="filepath" name="systrace/profile_chrome/third_party/README.chromium"
-                desc="该文件涉及GPL-3.0+,经确认不会使用" />
+                desc="经确认，该文件不会使用" />
             <filteritem type="filepath" name="telemetry/third_party/websocket-client/.*"
-                desc="该文件涉及LGPL-3.0-only,经确认不会使用" />
+                desc="经确认，该文件不会使用" />
             </filefilter>
 
             <filefilter name="defaultFilter">
