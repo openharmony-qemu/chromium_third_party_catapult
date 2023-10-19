@@ -166,9 +166,9 @@ used to filter file path.
             <filteritem type="filepath" name="third_party/requests_toolbelt/requests_toolbelt/_compat.py"
                 desc="chromuim原生文件无license" />
             <filteritem type="filepath" name="systrace/profile_chrome/third_party/README.chromium"
-                desc="GPL-3.0+禁止使用" />
+                desc="该文件涉及GPL-3.0+,经确认不会使用" />
             <filteritem type="filepath" name="telemetry/third_party/websocket-client/.*"
-                desc="LGPL-3.0-only禁止使用" />
+                desc="该文件涉及LGPL-3.0-only,经确认不会使用" />
             </filefilter>
 
             <filefilter name="defaultFilter">
@@ -250,197 +250,26 @@ used to filter file path.
                 * Licensed under the MIT:
                 * http://www.opensource.org/licenses/mit-license.php
                 " desc="" />
-            </licensematcher>
-            <licensematcher name="MIT" desc="">
                 <licensetext name="
                 jQuery Foundation, Inc. | jquery.org/license
                 " desc="" />
-            </licensematcher>
-             <licensematcher name="MIT" desc="">
                 <licensetext name="
                 # This module is part of the Python Paste Project and is released under
                 # the MIT License: http://www.opensource.org/licenses/mit-license.php
                 " desc="" />
-            </licensematcher>
-            <licensematcher name="Apache-2.0" desc="">
-                <licensetext name="
-                License: Apache 2.0
-                License File: NOT_SHIPPED
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-                <licensetext name="
-                License: BSD
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-                <licensetext name="
-                License: BSD license
-                License File: NOT_SHIPPED
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-                <licensetext name="
-                License: BSD
-                License File: NOT_SHIPPED
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-                <licensetext name="
-                Name: symbols module from Chromium
-                URL: https://chromium.googlesource.com/chromium/src.git
-                License: BSD
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-                <licensetext name="
-                # mock 1.0
-                # http://www.voidspace.org.uk/python/mock/
-
-                # Released subject to the BSD License
-                # Please see http://www.voidspace.org.uk/python/license.shtml
-
-                # Scripts maintained at http://www.voidspace.org.uk/python/index.shtml
-                # Comments, suggestions and bug reports welcome.
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-                <licensetext name="
-                Redistribution and use in source and binary forms, with or without
-                modification, are permitted provided that the following conditions are met:
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-                <licensetext name="
-                Name: depot_tools
-                Short Name: depot_tools
-                URL: https://chromium.googlesource.com/chromium/tools/depot_tools.git
-                Revision: 271a78ac35d784bf93b48831ad91c8d566e67bde
-                License: BSD
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-3-Clause" desc="">
-                <licensetext name="
-                :license: BSD-3-Clause
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-2-Clause" desc="">
-                <licensetext name="
-                * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
-                * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
-                * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-                * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
-                * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-                * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-                * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-                * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-                * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-                * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
-                * THE POSSIBILITY OF SUCH DAMAGE.
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="BSD-2-Clause" desc="">
-                <licensetext name="
-                Name: pyasn1
-                URL: https://github.com/etingof/pyasn1
-                Version: 0.4.5
-                License: BSD-2
-
-                Description:
-                The Universal Character Encoding Detector.
-
-                This was installed as a dependency of requests via pip.
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="Generic Bare Warranty Disclaimer" desc="">
-                <licensetext name="
-                # THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
-                # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-                # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-                # NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
-                # BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
-                # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-                # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-                # SOFTWARE.
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="MIT" desc="">
                 <licensetext name="
                  * Dual licensed under the MIT (MIT-LICENSE.txt)
                  * and GPL (GPL-LICENSE.txt) licenses.
                 " desc="" />
-            </licensematcher>
-            <licensematcher name="MIT" desc="">
                 <licensetext name="
                 * JQuery URL Parser plugin, v2.2.1
                 * Developed and maintanined by Mark Perkins, mark@allmarkedup.com
                 * Source repository: https://github.com/allmarkedup/jQuery-URL-Parser
                 * Licensed under an MIT-style license. See https://github.com/allmarkedup/jQuery-URL-Parser/blob/master/LICENSE for details.
                 " desc="" />
-            </licensematcher>
-            <licensematcher name="GPL-1.0-or-later" desc="">
-                <licensetext name="
-                Name: Perf to JSON conversion script
-                Short Name: perf_to_json
-                URL: http://www.chromium.org
-                Version: 0
-                Date: 21.7.2014
-                Revision: 0
-                License: GPL
-                License File: NOT_SHIPPED
-                Security Critical: No
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="Apache-2.0" desc="">
-                <licensetext name="
-                License: Apache License 2.0
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="Apache-2.0" desc="">
-                <licensetext name="
-                Name: apiclient
-                URL: https://github.com/google/google-api-python-client/
-                Version: 1.4.0
-                License: Apache
-
-                Description:
-                The Google API Client for Python is a client library for accessing Google APIs.
-                This is used in the perf dashboard for communicating with the issue tracker,
-                buildbucket, etc. It has several dependencies, including uritemplate and six.
-                " desc="" />
-            </licensematcher>
-             <licensematcher name="Apache-2.0" desc="">
-                <licensetext name="
-                License: Apache
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="Apache-2.0" desc="">
-                <licensetext name="
-                License: Apache 2.0
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="LGPL-3.0-only" desc="">
-                <licensetext name="
-                Name: Python websocket-client
-                Short Name: websocket-client
-                URL: https://github.com/liris/websocket-client
-                Version: 0.41.0
-                Revision: 83419000cb50a732bf3fc479cb0a9be097af212a
-                Date: Fri Feb 3rd 03:14:01 2017 EST
-                License: LGPL-3.0
-                License File: NOT_SHIPPED
-                Security Critical: no
-
-                Description:
-
-                websocket-client module is WebSocket client for python. This provide the low
-                level APIs for WebSocket. All APIs are the synchronous functions.
-
-                Used by the python code in devtools-auto to communicate with a running Chrome instance.
-
-                Local Modifications:
-                None.
-
+                  <licensetext name="
+                /*! jQuery v3.4.1 | (c) JS Foundation and other contributors |
+                * jquery.org/license */
                 " desc="" />
             </licensematcher>
             <licensematcher name="BSD-3-Clause" desc="">
@@ -475,6 +304,147 @@ used to filter file path.
                 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
                 POSSIBILITY OF SUCH DAMAGE.
                 " desc="" />
+                <licensetext name="
+                License: BSD
+                " desc="" />
+                <licensetext name="
+                License: BSD license
+                License File: NOT_SHIPPED
+                " desc="" />
+                <licensetext name="
+                License: BSD
+                License File: NOT_SHIPPED
+                " desc="" />
+                <licensetext name="
+                Name: symbols module from Chromium
+                URL: https://chromium.googlesource.com/chromium/src.git
+                License: BSD
+                " desc="" />
+                <licensetext name="
+                # mock 1.0
+                # http://www.voidspace.org.uk/python/mock/
+
+                # Released subject to the BSD License
+                # Please see http://www.voidspace.org.uk/python/license.shtml
+
+                # Scripts maintained at http://www.voidspace.org.uk/python/index.shtml
+                # Comments, suggestions and bug reports welcome.
+                " desc="" />
+                <licensetext name="
+                Redistribution and use in source and binary forms, with or without
+                modification, are permitted provided that the following conditions are met:
+                " desc="" />
+                <licensetext name="
+                Name: depot_tools
+                Short Name: depot_tools
+                URL: https://chromium.googlesource.com/chromium/tools/depot_tools.git
+                Revision: 271a78ac35d784bf93b48831ad91c8d566e67bde
+                License: BSD
+                " desc="" />
+                <licensetext name="
+                :license: BSD-3-Clause
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="BSD-2-Clause" desc="">
+                <licensetext name="
+                * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+                * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+                * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+                * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+                * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+                * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+                * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+                * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+                * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+                * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+                * THE POSSIBILITY OF SUCH DAMAGE.
+                " desc="" />
+                <licensetext name="
+                Name: pyasn1
+                URL: https://github.com/etingof/pyasn1
+                Version: 0.4.5
+                License: BSD-2
+
+                Description:
+                The Universal Character Encoding Detector.
+
+                This was installed as a dependency of requests via pip.
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="Generic Bare Warranty Disclaimer" desc="">
+                <licensetext name="
+                # THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
+                # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+                # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+                # NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+                # BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+                # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+                # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+                # SOFTWARE.
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="GPL-1.0-or-later" desc="">
+                <licensetext name="
+                Name: Perf to JSON conversion script
+                Short Name: perf_to_json
+                URL: http://www.chromium.org
+                Version: 0
+                Date: 21.7.2014
+                Revision: 0
+                License: GPL
+                License File: NOT_SHIPPED
+                Security Critical: No
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="Apache-2.0" desc="">
+                <licensetext name="
+                License: Apache License 2.0
+                " desc="" />
+                <licensetext name="
+                Name: apiclient
+                URL: https://github.com/google/google-api-python-client/
+                Version: 1.4.0
+                License: Apache
+
+                Description:
+                The Google API Client for Python is a client library for accessing Google APIs.
+                This is used in the perf dashboard for communicating with the issue tracker,
+                buildbucket, etc. It has several dependencies, including uritemplate and six.
+                " desc="" />
+                <licensetext name="
+                License: Apache
+                " desc="" />
+                <licensetext name="
+                License: Apache 2.0
+                " desc="" />
+                <licensetext name="
+                License: Apache 2.0
+                License File: NOT_SHIPPED
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="LGPL-3.0-only" desc="">
+                <licensetext name="
+                Name: Python websocket-client
+                Short Name: websocket-client
+                URL: https://github.com/liris/websocket-client
+                Version: 0.41.0
+                Revision: 83419000cb50a732bf3fc479cb0a9be097af212a
+                Date: Fri Feb 3rd 03:14:01 2017 EST
+                License: LGPL-3.0
+                License File: NOT_SHIPPED
+                Security Critical: no
+
+                Description:
+
+                websocket-client module is WebSocket client for python. This provide the low
+                level APIs for WebSocket. All APIs are the synchronous functions.
+
+                Used by the python code in devtools-auto to communicate with a running Chrome instance.
+
+                Local Modifications:
+                None.
+
+                " desc="" />
             </licensematcher>
             <licensematcher name="Python-2.0" desc="">
                 <licensetext name="
@@ -494,12 +464,6 @@ used to filter file path.
 
                 This was installed as a dependency of the requests library through pip.
 
-                " desc="" />
-            </licensematcher>
-            <licensematcher name="MIT" desc="">
-                <licensetext name="
-                /*! jQuery v3.4.1 | (c) JS Foundation and other contributors |
-                * jquery.org/license */
                 " desc="" />
             </licensematcher>
         </licensematcherlist>
