@@ -1,0 +1,11 @@
+common/py_vulcanize/py_vulcanize/__pycache__/
+third_party/beautifulsoup4-4.9.3/py3k/bs4/__pycache__/
+third_party/beautifulsoup4-4.9.3/py3k/bs4/builder/__pycache__/
+third_party/html5lib-1.1/html5lib/__pycache__/
+third_party/html5lib-1.1/html5lib/_trie/__pycache__/
+third_party/html5lib-1.1/html5lib/treebuilders/__pycache__/
+third_party/html5lib-1.1/html5lib/treewalkers/__pycache__/
+third_party/six/__pycache__/
+third_party/webencodings-0.5.1/webencodings/__pycache__/
+tracing/__pycache__/
+tracing/tracing_build/__pycache__/
