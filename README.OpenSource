@@ -1,0 +1,11 @@
+[
+    {
+        "Name": "catapult",
+        "License": "BSD-3-Clause",
+        "License File": "LICENSE",
+        "Version Number": "8bc3659ded63d583750adfe835da1cf0612c79ca",
+         "Owner": "liujixin@huawei.com",
+        "Upstream URL": "https://chromium.googlesource.com/catapult.git@8bc3659ded63d583750adfe835da1cf0612c79ca",
+        "Description": "Catapult 是Chrome/Chromium/Chromium OS所使用的一系列性能工具的组合"
+    }
+]
