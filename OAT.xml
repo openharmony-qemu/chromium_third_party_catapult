@@ -1,0 +1,471 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- Copyright (c) 2021 Huawei Device Co., Ltd.
+
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+
+          http://www.apache.org/licenses/LICENSE-2.0
+
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+
+    This is the configuration file template for OpenHarmony OSS Audit Tool, please copy it to your
+project root dir and modify it refer to OpenHarmony/tools_oat/README.
+    All configurations in this file will be merged to OAT-Default.xml, if you have any questions or
+concerns, please create issue in OpenHarmony/tools_oat and @jalenchen or chenyaxun.
+
+    licensefile:
+    1.If the project don't have "LICENSE" in root dir, please define all the license files in this
+project in , OAT will check license files according to this rule.
+
+    policylist:
+    1. policy: If the OAT-Default.xml policies do not meet your requirements, please add policies here.
+    2. policyitem: The fields type, name, path, desc is required, and the fields rule, group,
+filefilter is optional,the default value is:
+    <policyitem type="" name="" path="" desc="" rule="may" group="defaultGroup"
+filefilter="defaultPolicyFilter"/>
+    3. policyitem type:
+        "compatibility" is used to check license compatibility in the specified path;
+        "license" is used to check source license header in the specified path;
+        "copyright" is used to check source copyright header in the specified path;
+        "import" is used to check source dependency in the specified path, such as import ... ,include ...
+        "filetype" is used to check file type in the specified path, supported file types: archive, binary
+        "filename" is used to check whether the specified file exists in the specified path(projectroot
+means the root dir of the project), supported file names: LICENSE, README, README.OpenSource
+    4. policyitem name: This field is used for define the license, copyright, "*" means match all, the
+"!" prefix means could not match this value. For example, "!GPL" means can not use GPL license.
+    5. policyitem path: This field is used for define the source file scope to apply this policyitem,
+the "!" prefix means exclude the files. For example, "!.*/lib/.*" means files in lib dir will be
+exclude while process this policyitem.
+    6. policyitem rule and group: These two fields are used together to merge policy results. "may"
+policyitems in the same group means any one in this group passed, the result will be passed.
+    7. policyitem filefilter: Used to bind filefilter which define filter rules.
+    7. policyitem desc: Used to describe the reason of this policy item, committers will check this
+while merging the code.
+    8. filefilter: Filter rules, the type filename is used to filter file name, the type filepath is
+used to filter file path.
+
+    Note:If the text contains special characters, please escape them according to the following rules:
+    " == &quot;
+    & == &amp;
+    ' == &apos;
+    < == &lt;
+    > == &gt;
+-->
+
+<configuration>
+    <oatconfig>
+         <policylist>
+            <policy name="projectPolicy" desc="">
+            <policyitem type="compatibility" name="MIT" path="experimental/heatmap/jquery.min.js" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="MIT" path="third_party/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="MIT" path="third_party/Paste/paste/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="MIT" path="third_party/mapreduce/mapreduce/static/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="MIT" path="third_party/pipeline/pipeline/ui/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="MIT" path="third_party/werkzeug/debug/shared/jquery.js" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="BSD-3-Clause" path="common/py_trace_event/third_party/protobuf/README.chromium" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="BSD-3-Clause" path="telemetry/third_party/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="BSD-3-Clause" path="third_party/depot_tools/README.catapult" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="BSD-3-Clause" path="third_party/google-endpoints/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="BSD-3-Clause" path="tracing/third_party/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="BSD-3-Clause" path="tracing/third_party/d3/LICENSE" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="BSD-3-Clause" path="third_party/mock/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="BSD-2-Clause" path="third_party/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="BSD-2-Clause" path="third_party/chardet/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="Generic Bare Warranty Disclaimer" path="third_party/google-endpoints/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="Generic Bare Warranty Disclaimer" path="telemetry/third_party/modulegraph/LICENSE" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="Apache-2.0" path="telemetry/third_party/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="Apache-2.0" path="third_party/google-endpoints/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="Apache-2.0" path="third_party/apiclient/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="Apache-2.0" path="third_party/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="Python-2.0" path="third_party/urllib3/urllib3/packages/ssl_match_hostname/_implementation.py" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="JSON" path="common/py_vulcanize/third_party/rjsmin/bench/.*" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="Unicode-TOU" path="third_party/idna/LICENSE.rst" desc="经法务确认为宽松型许可证" />
+            <policyitem type="compatibility" name="MPL-2.0" path="third_party/certifi/.*" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="LGPLStyleLicense" path="third_party/chardet/chardet/.*" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="LGPLStyleLicense" path="telemetry/third_party/websocket-client/websocket/.*" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="MPL-1.1" path="third_party/certifi/README.chromium/.*" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="MPL-1.1" path="third_party/certifi/README.chromium" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPLStyleLicense" path="third_party/flot/jquery.flot.resize.js" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPLStyleLicense" path="third_party/pipeline/pipeline/ui/.*" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPLStyleLicense" path="third_party/coverage/coverage/htmlfiles/.*" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPLStyleLicense" path="third_party/chardet/LICENSE" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPLStyleLicense" path="common/py_vulcanize/third_party/rjsmin/bench/apiviewer.js" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPLStyleLicense" path="third_party/vinn/third_party/v8/LICENSE.valgrind" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPLStyleLicense" path="telemetry/third_party/.*" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPLStyleLicense" path="common/py_vulcanize/third_party/rjsmin/bench/jquery-1.7.1.js" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPLStyleLicense" path="third_party/mapreduce/mapreduce/static/jquery-1.6.1.min.js" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPLStyleLicense" path="systrace/profile_chrome/third_party/perf_to_tracing.py" desc="经法务确认,涉及文件在render下进行了隔离" />
+            <policyitem type="compatibility" name="GPL-2.0-or-later" path="systrace/profile_chrome/third_party/COPYING" desc="经法务确认,涉及文件在render下进行了隔离" />
+            </policy>
+        </policylist>
+        <filefilterlist>
+            <filefilter name="defaultPolicyFilter"
+                desc="Filters for compatibility,license header policies">
+            <filteritem type="filepath" name="telemetry/third_party/mox3/README.rst"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/coverage/ci/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/gsutil/third_party/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/WebOb/docs/conf.py"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="telemetry/third_party/altgraph/doc/index.rst"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/Paste/paste/util/PySourceColor.py"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/google-endpoints/setuptools/command/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/html5lib-1.1/CHANGES.rst"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/Paste/paste/util/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/ijson/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/pyasn1/pyasn1/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/pyasn1_modules/pyasn1_modules/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/Paste/tests/test_urlparser.py"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/google-endpoints/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/mocha/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/polymer2/bower_components/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="telemetry/third_party/altgraph/doc/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/html5lib-python/doc/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/gsutil/gslib/vendored/boto/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/mox3/README.rst"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/webapp2/docs/tutorials/gettingstarted/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="tracing/third_party/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/pyparsing/README.rst"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="telemetry/third_party/websocket-client/README.rst"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/webapp2/.*"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/werkzeug/debug/shared/FONT_LICENSE"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/jszip/README.chromium"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/requests/requests/certs.py"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="third_party/requests_toolbelt/requests_toolbelt/_compat.py"
+                desc="chromuim原生文件无license" />
+            <filteritem type="filepath" name="systrace/profile_chrome/third_party/README.chromium"
+                desc="经确认，该文件不会使用" />
+            <filteritem type="filepath" name="telemetry/third_party/websocket-client/.*"
+                desc="经确认，该文件不会使用" />
+            </filefilter>
+
+            <filefilter name="defaultFilter">
+                <filteritem type="filepath" name="README.OpenSource" desc="Filter readme.opensource files" />
+            </filefilter>
+            <filefilter name="binaryFileTypePolicyFilter">
+                <filteritem type="filename" name="*.png"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.ico"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.jpg"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.pem"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.dat"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.dll"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.skp"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.sha1"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.rst"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.so"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.enc"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.exe"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.p12"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.mov"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.asis"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.gif"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.gz"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.mp4"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.old"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.mp3"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.webm"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="vinn/third_party/v8/.*"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="gsutil/third_party/httplib2/test/deflate/deflated-content"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.ttf"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.pdf"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.crx"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*.zip"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filename" name="*d8"
+                    desc="chromium原生二进制文件，不会使用" />
+                <filteritem type="filepath" name="third_party/gsutil/third_party/httplib2/test/deflate/deflated-content"
+                    desc="chromium原生二进制文件，不会使用" />
+            </filefilter>
+        </filefilterlist>
+        <licensematcherlist>
+            <licensematcher name="MIT" desc="">
+                <licensetext name="
+                * timeago: a jQuery plugin, version: 0.9.1 (2010-08-30)
+                * @requires jQuery v1.2.3 or later
+                *
+                * Timeago is a jQuery plugin that makes it easy to support automatically
+                * updating fuzzy timestamps (e.g. &quot;4 minutes ago&quot; or &quot;about 1 day ago&quot;).
+                *
+                * For usage and examples, visit:
+                * http://timeago.yarp.com/
+                *
+                * Licensed under the MIT:
+                * http://www.opensource.org/licenses/mit-license.php
+                " desc="" />
+                <licensetext name="
+                jQuery Foundation, Inc. | jquery.org/license
+                " desc="" />
+                <licensetext name="
+                # This module is part of the Python Paste Project and is released under
+                # the MIT License: http://www.opensource.org/licenses/mit-license.php
+                " desc="" />
+                <licensetext name="
+                 * Dual licensed under the MIT (MIT-LICENSE.txt)
+                 * and GPL (GPL-LICENSE.txt) licenses.
+                " desc="" />
+                <licensetext name="
+                * JQuery URL Parser plugin, v2.2.1
+                * Developed and maintanined by Mark Perkins, mark@allmarkedup.com
+                * Source repository: https://github.com/allmarkedup/jQuery-URL-Parser
+                * Licensed under an MIT-style license. See https://github.com/allmarkedup/jQuery-URL-Parser/blob/master/LICENSE for details.
+                " desc="" />
+                  <licensetext name="
+                /*! jQuery v3.4.1 | (c) JS Foundation and other contributors |
+                * jquery.org/license */
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="BSD-3-Clause" desc="">
+                <licensetext name="
+                Redistribution and use in source and binary forms, with or without
+                modification, are permitted provided that the following conditions
+                are met:
+
+                    Redistributions of source code must retain the above
+                    copyright notice, this list of conditions and the
+                    following disclaimer.
+
+                    Redistributions in binary form must reproduce the above
+                    copyright notice, this list of conditions and the following
+                    disclaimer in the documentation and/or other materials
+                    provided with the distribution.
+
+                    Neither the name Ethan Furman nor the names of any
+                    contributors may be used to endorse or promote products
+                    derived from this software without specific prior written
+                    permission.
+
+                THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS &quot;AS IS&quot;
+                AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+                IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+                ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+                LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+                CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+                SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+                INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+                CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+                ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+                POSSIBILITY OF SUCH DAMAGE.
+                " desc="" />
+                <licensetext name="
+                License: BSD
+                " desc="" />
+                <licensetext name="
+                License: BSD license
+                License File: NOT_SHIPPED
+                " desc="" />
+                <licensetext name="
+                License: BSD
+                License File: NOT_SHIPPED
+                " desc="" />
+                <licensetext name="
+                Name: symbols module from Chromium
+                URL: https://chromium.googlesource.com/chromium/src.git
+                License: BSD
+                " desc="" />
+                <licensetext name="
+                # mock 1.0
+                # http://www.voidspace.org.uk/python/mock/
+
+                # Released subject to the BSD License
+                # Please see http://www.voidspace.org.uk/python/license.shtml
+
+                # Scripts maintained at http://www.voidspace.org.uk/python/index.shtml
+                # Comments, suggestions and bug reports welcome.
+                " desc="" />
+                <licensetext name="
+                Redistribution and use in source and binary forms, with or without
+                modification, are permitted provided that the following conditions are met:
+                " desc="" />
+                <licensetext name="
+                Name: depot_tools
+                Short Name: depot_tools
+                URL: https://chromium.googlesource.com/chromium/tools/depot_tools.git
+                Revision: 271a78ac35d784bf93b48831ad91c8d566e67bde
+                License: BSD
+                " desc="" />
+                <licensetext name="
+                :license: BSD-3-Clause
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="BSD-2-Clause" desc="">
+                <licensetext name="
+                * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+                * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+                * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+                * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+                * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+                * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+                * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+                * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+                * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+                * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+                * THE POSSIBILITY OF SUCH DAMAGE.
+                " desc="" />
+                <licensetext name="
+                Name: pyasn1
+                URL: https://github.com/etingof/pyasn1
+                Version: 0.4.5
+                License: BSD-2
+
+                Description:
+                The Universal Character Encoding Detector.
+
+                This was installed as a dependency of requests via pip.
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="Generic Bare Warranty Disclaimer" desc="">
+                <licensetext name="
+                # THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
+                # EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+                # MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+                # NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+                # BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+                # ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+                # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+                # SOFTWARE.
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="GPL-1.0-or-later" desc="">
+                <licensetext name="
+                Name: Perf to JSON conversion script
+                Short Name: perf_to_json
+                URL: http://www.chromium.org
+                Version: 0
+                Date: 21.7.2014
+                Revision: 0
+                License: GPL
+                License File: NOT_SHIPPED
+                Security Critical: No
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="Apache-2.0" desc="">
+                <licensetext name="
+                License: Apache License 2.0
+                " desc="" />
+                <licensetext name="
+                Name: apiclient
+                URL: https://github.com/google/google-api-python-client/
+                Version: 1.4.0
+                License: Apache
+
+                Description:
+                The Google API Client for Python is a client library for accessing Google APIs.
+                This is used in the perf dashboard for communicating with the issue tracker,
+                buildbucket, etc. It has several dependencies, including uritemplate and six.
+                " desc="" />
+                <licensetext name="
+                License: Apache
+                " desc="" />
+                <licensetext name="
+                License: Apache 2.0
+                " desc="" />
+                <licensetext name="
+                License: Apache 2.0
+                License File: NOT_SHIPPED
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="LGPL-3.0-only" desc="">
+                <licensetext name="
+                Name: Python websocket-client
+                Short Name: websocket-client
+                URL: https://github.com/liris/websocket-client
+                Version: 0.41.0
+                Revision: 83419000cb50a732bf3fc479cb0a9be097af212a
+                Date: Fri Feb 3rd 03:14:01 2017 EST
+                License: LGPL-3.0
+                License File: NOT_SHIPPED
+                Security Critical: no
+
+                Description:
+
+                websocket-client module is WebSocket client for python. This provide the low
+                level APIs for WebSocket. All APIs are the synchronous functions.
+
+                Used by the python code in devtools-auto to communicate with a running Chrome instance.
+
+                Local Modifications:
+                None.
+
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="Python-2.0" desc="">
+                <licensetext name="
+                # Note: This file is under the PSF license as the code comes from the python
+                # stdlib.   http://docs.python.org/3/license.html
+                " desc="" />
+            </licensematcher>
+            <licensematcher name="MPL-1.1" desc="">
+                <licensetext name="
+                Name: certifi
+                URL: https://certifi.io/en/latest/
+                Version: 2019.3.9
+                License: Mozilla Public License 2.0
+
+                Description:
+                Certifi is a carefully curated collection of Root Certificates for validating the trustworthiness of SSL certificates while verifying the identity of TLS hosts. It has been extracted from the Requests project.
+
+                This was installed as a dependency of the requests library through pip.
+
+                " desc="" />
+            </licensematcher>
+        </licensematcherlist>
+    </oatconfig>
+</configuration>
