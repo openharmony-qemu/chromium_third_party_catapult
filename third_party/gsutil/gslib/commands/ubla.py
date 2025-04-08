@@ -29,7 +29,9 @@ from gslib.exception import NO_URLS_MATCHED_TARGET
 from gslib.help_provider import CreateHelpText
 from gslib.third_party.storage_apitools import storage_v1_messages as apitools_messages
 from gslib.utils.constants import NO_MAX
+from gslib.utils.shim_util import GcloudStorageMap
 from gslib.utils.text_util import InsistOnOrOff
+from gslib.utils import shim_util
 
 _SET_SYNOPSIS = """
   gsutil ubla set (on|off) gs://<bucket_name>...
@@ -83,6 +85,16 @@ _get_help_text = CreateHelpText(_GET_SYNOPSIS, _GET_DESCRIPTION)
 IamConfigurationValue = apitools_messages.Bucket.IamConfigurationValue
 uniformBucketLevelAccessValue = IamConfigurationValue.BucketPolicyOnlyValue
 
+_GCLOUD_FORMAT_STRING = (
+    '--format=' + 'multi[terminator="' + shim_util.get_format_flag_newline() +
+    '"](name:format="value(format(\'Uniform bucket-level' +
+    ' access setting for gs://{}:\'))",' +
+    ' iamConfiguration.uniformBucketLevelAccess.enabled.yesno(no="False")' +
+    ':format="value[terminator=\'' + shim_util.get_format_flag_newline() +
+    '\'](format(\'  Enabled: {}\'))",' +
+    ' iamConfiguration.uniformBucketLevelAccess.lockedTime.sub("T", " ")' +
+    ':format="value(format(\'  LockedTime: {}\'))")')
+
 
 class UblaCommand(Command):
   """Implements the gsutil ubla command."""
@@ -117,6 +129,46 @@ class UblaCommand(Command):
           'get': _get_help_text,
           'set': _set_help_text,
       },
+  )
+
+  gcloud_storage_map = GcloudStorageMap(
+      gcloud_command={
+          'get':
+              GcloudStorageMap(
+                  gcloud_command=[
+                      'storage', 'buckets', 'list', _GCLOUD_FORMAT_STRING,
+                      '--raw'
+                  ],
+                  flag_map={},
+              ),
+          'set':
+              GcloudStorageMap(
+                  gcloud_command={
+                      'on':
+                          GcloudStorageMap(
+                              gcloud_command=[
+                                  'storage',
+                                  'buckets',
+                                  'update',
+                                  '--uniform-bucket-level-access',
+                              ],
+                              flag_map={},
+                          ),
+                      'off':
+                          GcloudStorageMap(
+                              gcloud_command=[
+                                  'storage',
+                                  'buckets',
+                                  'update',
+                                  '--no-uniform-bucket-level-access',
+                              ],
+                              flag_map={},
+                          ),
+                  },
+                  flag_map={},
+              )
+      },
+      flag_map={},
   )
 
   def _ValidateBucketListingRefAndReturnBucketName(self, blr):

@@ -22,7 +22,13 @@ API_METRIC_TYPE = "api/metrics"
 API_NAME = "api_name"
 REQUEST_STATUS = "request_status"
 RUN_TIME = "run_time"
+USER = "user"
+ORIGIN = "origin"
+JOB_TYPE_BY_NAME = "job_type_by_name"
 UUID = "uuid"
+BOT_NAME = "bot_name"
+BENCHMARK = "benchmark"
+STORY = "story"
 
 # swarming metric label keys
 SWARMING_TASK_ID = 'swarming_task_id'
@@ -30,6 +36,20 @@ SWARMING_BOT_ID = 'swarming_bot_id'
 SWARMING_BOT_OS = 'swarming_bot_os'
 SWARMING_TASK_PENDING_TIME = 'swarming_task_pending_time'
 SWARMING_TASK_RUNNING_TIME = 'swarming_task_running_time'
+
+#Auto Triaged Issue Status
+AUTO_TRIAGE_CREATED = 'issue_created'
+AUTO_TRIAGE_BISECTED = 'issue_bisected'
+AUTO_TRIAGE_CULPRIT_FOUND = 'culprit_found'
+
+
+def PublishAutoTriagedIssue(status):
+  label_dict = {'status': status}
+  _PublishTSCloudMetric(
+      project_id=app_identity.get_application_id(),
+      service_name='chromeperf',
+      metric_type='chromeperf/alerts/auto_triaged',
+      label_dict=label_dict)
 
 
 def PublishPerfIssueServiceGroupingImpariry(endpoint):
@@ -41,7 +61,7 @@ def PublishPerfIssueServiceGroupingImpariry(endpoint):
       label_dict=label_dict)
 
 
-def PublistPerfIssueInvalidComponentCount(component_count):
+def PublishPerfIssueInvalidComponentCount(component_count):
   label_dict = {'component_count': str(component_count)}
   _PublishTSCloudMetric(
       project_id=app_identity.get_application_id(),
@@ -144,15 +164,42 @@ def PublishPinpointJobStatusMetric(project_id,
                                    job_id,
                                    job_type,
                                    job_status,
+                                   job_user,
+                                   origin,
+                                   job_type_by_name,
+                                   bot_name,
+                                   benchmark,
+                                   story,
                                    metric_value=1):
-  label_dict = {JOB_ID: job_id, JOB_TYPE: job_type, JOB_STATUS: job_status}
+  label_dict = {
+      JOB_ID: job_id,
+      JOB_TYPE: job_type,
+      JOB_STATUS: job_status,
+      USER: job_user,
+      ORIGIN: origin,
+      JOB_TYPE_BY_NAME: job_type_by_name,
+      BOT_NAME: bot_name,
+      BENCHMARK: benchmark,
+      STORY: story
+  }
   _PublishTSCloudMetric(project_id, "pinpoint", "pinpoint/job/status_change",
                        label_dict, metric_value)
 
 
 def PublishPinpointJobRunTimeMetric(project_id, job_id, job_type, job_status,
-                                    metric_value):
-  label_dict = {JOB_ID: job_id, JOB_TYPE: job_type, JOB_STATUS: job_status}
+                                    job_user, origin, job_type_by_name,
+                                    bot_name, benchmark, story, metric_value):
+  label_dict = {
+      JOB_ID: job_id,
+      JOB_TYPE: job_type,
+      JOB_STATUS: job_status,
+      USER: job_user,
+      ORIGIN: origin,
+      JOB_TYPE_BY_NAME: job_type_by_name,
+      BOT_NAME: bot_name,
+      BENCHMARK: benchmark,
+      STORY: story
+  }
   _PublishTSCloudMetric(project_id, "pinpoint", "pinpoint/job/run_time",
                        label_dict, metric_value)
 
@@ -161,10 +208,26 @@ def PublishPinpointJobDetailMetrics(project_id,
                                     job_id,
                                     job_type,
                                     job_status,
+                                    job_user,
+                                    origin,
+                                    job_type_by_name,
+                                    bot_name,
+                                    benchmark,
+                                    story,
                                     change_count,
                                     attempt_count,
-                                    difference_count=1):
-  label_dict = {JOB_ID: job_id, JOB_TYPE: job_type, JOB_STATUS: job_status}
+                                    difference_count=0):
+  label_dict = {
+      JOB_ID: job_id,
+      JOB_TYPE: job_type,
+      JOB_STATUS: job_status,
+      USER: job_user,
+      ORIGIN: origin,
+      JOB_TYPE_BY_NAME: job_type_by_name,
+      BOT_NAME: bot_name,
+      BENCHMARK: benchmark,
+      STORY: story
+  }
   _PublishTSCloudMetric(project_id, "pinpoint",
                         "pinpoint/job/change_count_per_job", label_dict,
                         change_count)
@@ -174,6 +237,9 @@ def PublishPinpointJobDetailMetrics(project_id,
   _PublishTSCloudMetric(project_id, "pinpoint",
                         "pinpoint/job/difference_count_per_job", label_dict,
                         difference_count)
+  _PublishTSCloudMetric(project_id, "pinpoint",
+                        "pinpoint/job/has_difference", label_dict,
+                        0 if difference_count == 0 else 1)
 
 
 def _PublishTSCloudMetric(project_id,
@@ -181,6 +247,10 @@ def _PublishTSCloudMetric(project_id,
                          metric_type,
                          label_dict,
                          metric_value=1):
+  if app_identity.get_application_id() == 'testbed-test':
+    # do not proceed if it is running unit tests
+    return
+
   client = monitoring_v3.MetricServiceClient()
   project_name = f"projects/{project_id}"
 
@@ -225,12 +295,23 @@ def _PublishTSCloudMetric(project_id,
           "seconds": seconds,
           "nanos": nanos
       }})
-  point = monitoring_v3.Point({
-      "interval": interval,
-      "value": {
-          "double_value": metric_value
-      }
-  })
+  try:
+    point = monitoring_v3.Point({
+        "interval": interval,
+        "value": {
+            "double_value": metric_value
+        }
+    })
+  except TypeError as e:
+    point = monitoring_v3.Point({
+        "interval": interval,
+        "value": {
+            "double_value": int(metric_value)
+        }
+    })
+    logging.warning('Invalid value found in metric_value: %s. (%s)',
+                    metric_value, str(e))
+
   series.points = [point]
 
   try:

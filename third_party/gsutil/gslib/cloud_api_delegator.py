@@ -27,6 +27,7 @@ from gslib.cloud_api import CloudApi
 from gslib.cs_api_map import ApiMapConstants
 from gslib.cs_api_map import ApiSelector
 from gslib.exception import CommandException
+from gslib.utils import boto_util
 
 
 class CloudApiDelegator(CloudApi):
@@ -52,6 +53,7 @@ class CloudApiDelegator(CloudApi):
                status_queue,
                provider=None,
                debug=0,
+               http_headers=None,
                trace_token=None,
                perf_trace_token=None,
                user_project=None):
@@ -70,6 +72,7 @@ class CloudApiDelegator(CloudApi):
       provider: Default provider prefix describing cloud storage provider to
                 connect to.
       debug: Debug level for the API implementation (0..3).
+      http_headers (dict|None): Arbitrary headers to be included in every request.
       trace_token: Apiary trace token to pass to API.
       perf_trace_token: Performance trace token to use when making API calls.
       user_project: Project to be billed for this project.
@@ -79,6 +82,7 @@ class CloudApiDelegator(CloudApi):
                                             status_queue,
                                             provider=provider,
                                             debug=debug,
+                                            http_headers=http_headers,
                                             trace_token=trace_token,
                                             perf_trace_token=perf_trace_token,
                                             user_project=user_project)
@@ -140,6 +144,7 @@ class CloudApiDelegator(CloudApi):
             self.status_queue,
             provider=provider,
             debug=self.debug,
+            http_headers=self.http_headers,
             trace_token=self.trace_token,
             perf_trace_token=self.perf_trace_token,
             user_project=self.user_project))
@@ -171,13 +176,7 @@ class CloudApiDelegator(CloudApi):
 
     api = self.api_map[ApiMapConstants.DEFAULT_MAP][selected_provider]
 
-    using_gs_hmac = (
-        provider == 'gs' and
-        not config.has_option('Credentials', 'gs_oauth2_refresh_token') and
-        not (config.has_option('Credentials', 'gs_service_client_id') and
-             config.has_option('Credentials', 'gs_service_key_file')) and
-        (config.has_option('Credentials', 'gs_access_key_id') and
-         config.has_option('Credentials', 'gs_secret_access_key')))
+    using_gs_hmac = provider == 'gs' and boto_util.UsingGsHmac()
 
     configured_encryption = (provider == 'gs' and
                              (config.has_option('GSUtil', 'encryption_key') or

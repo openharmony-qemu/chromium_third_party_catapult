@@ -251,7 +251,14 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
       tracing_backend.FlushTracing()
 
     if self._devtools_client:
-      if "ENSURE_CLEAN_CHROME_SHUTDOWN" in os.environ:
+      # Telemetry closes Chrome by killing the Chrome process. This doesn't
+      # happen on mac if START_BROWSER_WITH_DEFAULT_PRIORITY, because chrome
+      # is then started using `open` command and telemetry only kills the
+      # 'open' command, leaving Chrome still running.
+      # Therefore force a clean shutdown on mac.
+      if ('ENSURE_CLEAN_CHROME_SHUTDOWN' in os.environ or
+          (os.environ.get('START_BROWSER_WITH_DEFAULT_PRIORITY', False) and
+           self.browser.platform.GetOSName() == 'mac')):
         # Forces a clean shutdown by sending a command to close the browser via
         # the devtools client. Uses a long timeout as a clean shutdown can
         # sometime take a long time to complete.
@@ -273,13 +280,22 @@ class ChromeBrowserBackend(browser_backend.BrowserBackend):
         raise exceptions.BrowserGoneException(self.browser, e)
       raise exceptions.BrowserConnectionGoneException(self.browser, e)
 
+  def GetVersionInfo(self):
+    try:
+      return self.devtools_client.GetVersion()
+    except (inspector_websocket.WebSocketException, socket.error) as e:
+      if not self.IsBrowserRunning():
+        raise exceptions.BrowserGoneException(self.browser, e)
+      raise exceptions.BrowserConnectionGoneException(self.browser, e)
+
   @property
   def supports_memory_dumping(self):
     return True
 
-  def DumpMemory(self, timeout=None, detail_level=None):
+  def DumpMemory(self, timeout=None, detail_level=None, deterministic=False):
     return self.devtools_client.DumpMemory(timeout=timeout,
-                                           detail_level=detail_level)
+                                           detail_level=detail_level,
+                                           deterministic=deterministic)
 
   @property
   def supports_overriding_memory_pressure_notifications(self):

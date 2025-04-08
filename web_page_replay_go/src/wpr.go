@@ -50,7 +50,7 @@ const longUsage = `
 
 type CertConfig struct {
 	// Flags common to all commands.
-	certFile, keyFile string
+	certFile, keyFile, certType string
 }
 
 type CommonConfig struct {
@@ -64,13 +64,16 @@ type CommonConfig struct {
 	injectScripts                            string
 
 	// Computed state.
-	root_cert    tls.Certificate
+	root_certs   []tls.Certificate
 	transformers []webpagereplay.ResponseTransformer
 }
 
 type RecordCommand struct {
 	common CommonConfig
 	cmd    cli.Command
+
+	// Custom flags for record.
+	enableExperimentalTimedChunk bool
 }
 
 type ReplayCommand struct {
@@ -94,14 +97,14 @@ func (certCfg *CertConfig) Flags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
 			Name:        "https_cert_file",
-			Value:       "wpr_cert.pem",
-			Usage:       "File containing a PEM-encoded X509 certificate to use with SSL.",
+			Value:       "",
+			Usage:       "File containing 1 or more comma separated PEM-encoded X509 certificates to use with SSL.",
 			Destination: &certCfg.certFile,
 		},
 		&cli.StringFlag{
 			Name:        "https_key_file",
-			Value:       "wpr_key.pem",
-			Usage:       "File containing a PEM-encoded private key to use with SSL.",
+			Value:       "",
+			Usage:       "File containing 1 or more comma separated PEM-encoded private keys to use with SSL.",
 			Destination: &certCfg.keyFile,
 		},
 	}
@@ -145,6 +148,14 @@ func (common *CommonConfig) Flags() []cli.Flag {
 	)
 }
 
+func (certCfg *CertConfig) CheckArgs(c *cli.Context) error {
+	if certCfg.certFile == "" && certCfg.keyFile == "" {
+		certCfg.certFile = "wpr_cert.pem,ecdsa_cert.pem"
+		certCfg.keyFile = "wpr_key.pem,ecdsa_key.pem"
+	}
+	return nil
+}
+
 func (common *CommonConfig) CheckArgs(c *cli.Context) error {
 	if c.Args().Len() > 1 {
 		return errors.New("too many args")
@@ -156,15 +167,26 @@ func (common *CommonConfig) CheckArgs(c *cli.Context) error {
 		return errors.New("must specify at least one port flag")
 	}
 
-	// Load common configs.
-	log.Printf("Loading cert from %v\n", common.certConfig.certFile)
-	log.Printf("Loading key from %v\n", common.certConfig.keyFile)
-	var err error
-	common.root_cert, err = tls.LoadX509KeyPair(common.certConfig.certFile, common.certConfig.keyFile)
+	err := common.certConfig.CheckArgs(c)
 	if err != nil {
-		return fmt.Errorf("error opening cert or key files: %v", err)
+		return err
 	}
 
+	// Load certFiles.
+	certFiles := strings.Split(common.certConfig.certFile, ",")
+	keyFiles := strings.Split(common.certConfig.keyFile, ",")
+	if len(certFiles) != len(keyFiles) {
+		return fmt.Errorf("list of cert files given should match list of key files")
+	}
+	for i := 0; i < len(certFiles); i++ {
+		log.Printf("Loading cert from %v\n", certFiles[i])
+		log.Printf("Loading key from %v\n", keyFiles[i])
+		root_cert, err := tls.LoadX509KeyPair(certFiles[i], keyFiles[i])
+		if err != nil {
+			return fmt.Errorf("error opening cert or key files: %v", err)
+		}
+		common.root_certs = append(common.root_certs, root_cert)
+	}
 	return nil
 }
 
@@ -186,7 +208,28 @@ func (common *CommonConfig) ProcessInjectedScripts(timeSeedMs int64) error {
 }
 
 func (r *RecordCommand) Flags() []cli.Flag {
-	return r.common.Flags()
+	return append(r.common.Flags(),
+		&cli.BoolFlag{
+			Name: "enable_experimental_timed_chunk",
+			Usage: "When specified, record the precise timings of receiving " +
+				"response stream chunks.",
+			Destination: &r.enableExperimentalTimedChunk,
+		},
+	)
+}
+
+func (r *RecordCommand) CheckArgs(c *cli.Context) error {
+	if err := r.common.CheckArgs(c); err != nil {
+		return err
+	}
+
+	if r.enableExperimentalTimedChunk {
+		log.Printf("WARNING: Timed chunk recording is enabled. Note that the" +
+			"implementation is highly experimental at the moment and the " +
+			"format is subject to change.")
+	}
+
+	return nil
 }
 
 func (r *ReplayCommand) Flags() []cli.Flag {
@@ -385,9 +428,13 @@ func (r *RecordCommand) Run(c *cli.Context) error {
 	}
 	archive.DeterministicTimeSeedMs = timeSeedMs
 
+	if r.enableExperimentalTimedChunk {
+		log.Printf("NOTIMPLEMENTED: Experimental Timed Chunk recording support")
+		os.Exit(1)
+	}
 	httpHandler := webpagereplay.NewRecordingProxy(archive, "http", r.common.transformers)
 	httpsHandler := webpagereplay.NewRecordingProxy(archive, "https", r.common.transformers)
-	tlsconfig, err := webpagereplay.RecordTLSConfig(r.common.root_cert, archive)
+	tlsconfig, err := webpagereplay.RecordTLSConfig(r.common.root_certs, archive)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating TLSConfig: %v", err)
 		os.Exit(1)
@@ -437,7 +484,7 @@ func (r *ReplayCommand) Run(c *cli.Context) error {
 
 	httpHandler := webpagereplay.NewReplayingProxy(archive, "http", r.common.transformers, r.quietMode)
 	httpsHandler := webpagereplay.NewReplayingProxy(archive, "https", r.common.transformers, r.quietMode)
-	tlsconfig, err := webpagereplay.ReplayTLSConfig(r.common.root_cert, archive)
+	tlsconfig, err := webpagereplay.ReplayTLSConfig(r.common.root_certs, archive)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating TLSConfig: %v", err)
 		os.Exit(1)
@@ -472,7 +519,7 @@ func main() {
 		Name:   "record",
 		Usage:  "Record web pages to an archive",
 		Flags:  record.Flags(),
-		Before: record.common.CheckArgs,
+		Before: record.CheckArgs,
 		Action: record.Run,
 	}
 
@@ -488,6 +535,7 @@ func main() {
 		Name:   "installroot",
 		Usage:  "Install a test root CA",
 		Flags:  installroot.Flags(),
+		Before: installroot.certConfig.CheckArgs,
 		Action: installroot.Install,
 	}
 
@@ -495,6 +543,7 @@ func main() {
 		Name:   "removeroot",
 		Usage:  "Remove a test root CA",
 		Flags:  removeroot.Flags(),
+		Before: removeroot.certConfig.CheckArgs,
 		Action: removeroot.Remove,
 	}
 

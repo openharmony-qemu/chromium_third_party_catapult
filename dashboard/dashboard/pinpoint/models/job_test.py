@@ -8,18 +8,20 @@ from __future__ import absolute_import
 
 import datetime
 from flask import Flask
-import mock
+from unittest import mock
 import sys
 
 from tracing.value.diagnostics import generic_set
 from tracing.value.diagnostics import reserved_infos
 
+from dashboard import sheriff_config_client
 from dashboard.common import testing_common
 from dashboard.common import layered_cache
 from dashboard.common import utils
 from dashboard.models import histogram
 from dashboard.models import anomaly
 from dashboard.models import graph_data
+from dashboard.models import subscription
 from dashboard.pinpoint.models import change
 from dashboard.pinpoint.models import errors
 from dashboard.pinpoint.models import job
@@ -127,6 +129,180 @@ class JobTest(test.TestCase):
     d = j.AsDict([job.OPTION_ESTIMATE])
     self.assertFalse('estimate' in d)
 
+  def testImprovementDirectionToStr(self):
+    j = job.Job.New((), (), bug_id=123456)
+    self.assertEqual(j._ImprovementDirectionToStr(anomaly.UP), 'UP')
+    self.assertEqual(j._ImprovementDirectionToStr(anomaly.DOWN), 'DOWN')
+    self.assertEqual(j._ImprovementDirectionToStr(anomaly.UNKNOWN), 'UNKNOWN')
+
+  def testGetGitHash(self):
+    j = job.Job.New((), (), bug_id=123456)
+    c = change.Change((change.Commit('chromium', 'test_git_hash'),))
+    self.assertEqual(j._GetGitHash(c), 'test_git_hash')
+
+  def testCreateWorkflowExecutionRequest(self):
+    j = job.Job.New((), (),
+                    arguments={
+                        'configuration': 'bot1',
+                        'benchmark': 'webrtc_perf_tests'
+                    },
+                    bug_id=123456)
+    c1 = change.Change((change.Commit('chromium', 'test_git_hash1'),))
+    c2 = change.Change((change.Commit('chromium', 'test_git_hash2'),))
+    improvement_dir = 'UP'
+    request = j._CreateWorkflowExecutionRequest(c1, c2, improvement_dir)
+    self.assertEqual(request['start_git_hash'], 'test_git_hash1')
+    self.assertEqual(request['end_git_hash'], 'test_git_hash2')
+    self.assertEqual(request['target'], 'webrtc_perf_tests')
+    self.assertEqual(request['improvement_dir'], improvement_dir)
+
+  @mock.patch('dashboard.services.perf_issue_service_client.GetIssue')
+  def testCanSandwich(self, get_issue):
+
+    def _GetIssue(bug_id, project_name='chromium'):
+      if bug_id == 123456:
+        return {
+            'projectId':
+                project_name,
+            'id':
+                123456,
+            'title':
+                '[Sandwich Verification Test Speedometer2]: 2 regressions in speedometer2',
+        }
+      if bug_id == 123457:
+        return {
+            'projectId':
+                project_name,
+            'id':
+                123457,
+            'title':
+                '[[b/12345 fix a bug] Sandwich Verification Test Speedometer2]: 2 regressions',
+        }
+      if bug_id == 123458:
+        return {
+            'projectId':
+                project_name,
+            'id':
+                123458,
+            'title':
+                '[b/12345 fix a bug] [Sandwich Verification Test Speedometer2]: 2 regressions',
+        }
+      if bug_id == 123459:
+        return {
+            'projectId':
+                project_name,
+            'id':
+                123459,
+            'title':
+                '[Sandwich Verification Test Speedometer2][b/12345 fix a bug]: 2 regressions',
+        }
+      if bug_id == 123460:
+        return {
+            'projectId':
+                project_name,
+            'id':
+                123460,
+            'title':
+                '[Sandwich Verification Test Speedometer2 [b/12345 fix a bug]]: 2 regressions',
+        }
+
+      return {'projectId': project_name, 'id': bug_id, 'title': 'fake_title'}
+
+    get_issue.side_effect = _GetIssue
+
+    j1 = job.Job.New((), (),
+                     arguments={
+                         'configuration': 'bot1',
+                         'benchmark': 'webrtc_perf_tests'
+                     },
+                     bug_id=12345)
+    j2 = job.Job.New((), (),
+                     arguments={
+                         'configuration': 'linux-perf',
+                         'benchmark': 'speedometer2'
+                     },
+                     bug_id=123456,
+                     user='chromeperf@appspot.gserviceaccount.com')
+    j3 = job.Job.New((), (),
+                     arguments={
+                         'configuration': 'linux-perf',
+                         'benchmark': 'speedometer2'
+                     },
+                     bug_id=123457,
+                     user='chromeperf@appspot.gserviceaccount.com')
+    j4 = job.Job.New((), (),
+                     arguments={
+                         'configuration': 'linux-perf',
+                         'benchmark': 'speedometer2'
+                     },
+                     bug_id=123458,
+                     user='chromeperf@appspot.gserviceaccount.com')
+    j5 = job.Job.New((), (),
+                     arguments={
+                         'configuration': 'linux-perf',
+                         'benchmark': 'speedometer2'
+                     },
+                     bug_id=123459,
+                     user='chromeperf@appspot.gserviceaccount.com')
+    j6 = job.Job.New((), (),
+                     arguments={
+                         'configuration': 'linux-perf',
+                         'benchmark': 'speedometer2'
+                     },
+                     bug_id=123460,
+                     user='chromeperf@appspot.gserviceaccount.com')
+    j7 = job.Job.New((), (),
+                     arguments={
+                         'configuration': 'linux-perf',
+                         'benchmark': 'speedometer2'
+                     },
+                     bug_id=123456)
+    self.assertFalse(j1._CanSandwich())
+    self.assertTrue(j2._CanSandwich())
+    self.assertTrue(j3._CanSandwich())
+    self.assertTrue(j4._CanSandwich())
+    self.assertTrue(j5._CanSandwich())
+    self.assertTrue(j6._CanSandwich())
+    self.assertFalse(j7._CanSandwich())
+
+  @mock.patch('dashboard.services.workflow_service.CreateExecution',
+              mock.MagicMock(return_value='test-workflow-execution-name'))
+  def testStartSandwichAndUpdateWorkflowGroup(self):
+    j = job.Job.New((), (),
+                    arguments={
+                        'configuration': 'bot1',
+                        'benchmark': 'webrtc_perf_tests'
+                    },
+                    bug_id=123456)
+    c0 = change.Change((change.Commit('chromium', 'git_hash_0'),))
+    c1 = change.Change((change.Commit('chromium', 'git_hash_1'),))
+    change_map = {c0: [0], c1: [10]}
+    differences = [(c0, c1)]
+    got_regression_cnt, got_wf_executions = j._StartSandwichAndUpdateWorkflowGroup(
+        anomaly.DOWN, differences, change_map)
+    self.assertEqual(got_regression_cnt, 1)
+    self.assertEqual(got_wf_executions, ['test-workflow-execution-name'])
+
+  @mock.patch('dashboard.services.workflow_service.CreateExecution',
+              mock.MagicMock(return_value='test-workflow-execution-name'))
+  def testStartSandwichAndUpdateWorkflowGroup_multipleCulprits(self):
+    j = job.Job.New((), (),
+                    arguments={
+                        'configuration': 'bot1',
+                        'benchmark': 'webrtc_perf_tests'
+                    },
+                    bug_id=123456)
+    c0 = change.Change((change.Commit('chromium', 'git_hash_0'),))
+    c1 = change.Change((change.Commit('chromium', 'git_hash_1'),))
+    c2 = change.Change((change.Commit('chromium', 'git_hash_2'),))
+    c3 = change.Change((change.Commit('chromium', 'git_hash_3'),))
+    change_map = {c0: [0], c1: [10], c2: [11], c3: [20]}
+    differences = [(c0, c1), (c2, c3)]
+    got_regression_cnt, got_wf_executions = j._StartSandwichAndUpdateWorkflowGroup(
+        anomaly.DOWN, differences, change_map)
+    self.assertEqual(got_regression_cnt, 2)
+    self.assertEqual(got_wf_executions, ['test-workflow-execution-name',
+      'test-workflow-execution-name'])
 
 @mock.patch('dashboard.services.swarming.GetAliveBotsByDimensions',
             mock.MagicMock(return_value=[]))
@@ -203,6 +379,10 @@ class RetryTest(test.TestCase):
             mock.MagicMock(return_value=["a"]))
 @mock.patch('dashboard.common.cloud_metric._PublishTSCloudMetric',
             mock.MagicMock())
+@mock.patch('dashboard.services.perf_issue_service_client.GetAlertGroupQuality',
+            mock.MagicMock(return_value={'result': 'Good'}))
+@mock.patch.object(sheriff_config_client.SheriffConfigClient, '__init__',
+                     mock.MagicMock(return_value=None))
 class BugCommentTest(test.TestCase):
 
   def setUp(self):
@@ -327,6 +507,110 @@ class BugCommentTest(test.TestCase):
         owner='author@chromium.org',
         labels=mock.ANY,
         cc=['author@chromium.org'],
+        components=[],
+        merge_issue=None)
+    message = self.add_bug_comment.call_args.kwargs['comment']
+    self.assertIn('Found a significant difference at 1 commit.', message)
+    self.assertIn('<b>Subject.</b>', message)
+    self.assertIn('https://example.com/repository/+/git_hash', message)
+    labels = self.add_bug_comment.call_args.kwargs['labels']
+    self.assertIn('Pinpoint-Culprit-Found', labels)
+    self.assertNotIn('-Pinpoint-Culprit-Found', labels)
+    self.assertIn('Pinpoint-Job-Completed', labels)
+    self.assertNotIn('-Pinpoint-Job-Completed', labels)
+
+  @mock.patch('dashboard.pinpoint.models.change.commit.Commit.AsDict')
+  @mock.patch.object(job.job_state.JobState, 'ResultValues')
+  @mock.patch.object(job.job_state.JobState, 'Differences')
+  @mock.patch.object(sheriff_config_client.SheriffConfigClient, 'Match')
+  @mock.patch.object(histogram.SparseDiagnostic, 'GetMostRecentDataByNamesSync')
+  def testCompletedWithCommitAndReport(self, recent_data, match, differences,
+                                       result_values, commit_as_dict):
+    c = change.Change((change.Commit('chromium', 'git_hash'),))
+    differences.return_value = [(None, c)]
+    result_values.side_effect = [0], [1.23456]
+    commit_as_dict.return_value = {
+        'repository': 'chromium',
+        'git_hash': 'git_hash',
+        'url': 'https://example.com/repository/+/git_hash',
+        'author': 'author@chromium.org',
+        'subject': 'Subject.',
+        'message': 'Subject.\n\nCommit message.',
+    }
+    match.return_value = ([
+        subscription.Subscription(
+            name='sheriff subscription',
+            bug_components=['test-component'],
+            bug_cc_emails=['test@cc.email'],
+            bug_labels=['test-label'])
+    ], None)
+    recent_data.return_value = ''
+    self.get_issue.return_value = {
+        'status': 'Untriaged',
+        'labels': ['Chromeperf-Delay-Reporting']
+    }
+    j = job.Job.New((), (),
+                    bug_id=123456,
+                    comparison_mode='performance',
+                    tags={
+                        'auto_bisection': 'true',
+                        'test_path': 'dummy/path'
+                    })
+    scheduler.Schedule(j)
+    app = Flask(__name__)
+    with app.test_request_context('dummy/path', 'GET'):
+      j.Run()
+    self.ExecuteDeferredTasks('default')
+    self.assertFalse(j.failed)
+    self.add_bug_comment.assert_called_once_with(
+        issue_id=123456,
+        project_name='chromium',
+        comment=mock.ANY,
+        status='Assigned',
+        owner='author@chromium.org',
+        labels=mock.ANY,
+        cc=['author@chromium.org', 'test@cc.email'],
+        components=['test-component', '-Speed>Regressions'],
+        merge_issue=None)
+    message = self.add_bug_comment.call_args.kwargs['comment']
+    self.assertIn('Found a significant difference at 1 commit.', message)
+    labels = self.add_bug_comment.call_args.kwargs['labels']
+    self.assertIn('test-label', labels)
+
+  @mock.patch('dashboard.pinpoint.models.change.commit.Commit.AsDict')
+  @mock.patch.object(job.job_state.JobState, 'ResultValues')
+  @mock.patch.object(job.job_state.JobState, 'Differences')
+  def testCompletedWithCommitDoNotNotify(self, differences, result_values,
+                                         commit_as_dict):
+    c = change.Change((change.Commit('chromium', 'git_hash'),))
+    differences.return_value = [(None, c)]
+    result_values.side_effect = [0], [1.23456]
+    commit_as_dict.return_value = {
+        'repository': 'chromium',
+        'git_hash': 'git_hash',
+        'url': 'https://example.com/repository/+/git_hash',
+        'author': 'author@chromium.org',
+        'subject': 'Subject.',
+        'message': 'Subject.\n\nCommit message.',
+    }
+    self.get_issue.return_value = {
+        'status': 'Untriaged',
+        'labels': ['DoNotNotify']
+    }
+    j = job.Job.New((), (), bug_id=123456, comparison_mode='performance')
+    scheduler.Schedule(j)
+    j.Run()
+    self.ExecuteDeferredTasks('default')
+    self.assertFalse(j.failed)
+    self.add_bug_comment.assert_called_once_with(
+        issue_id=123456,
+        project_name='chromium',
+        comment=mock.ANY,
+        status='Available',  # Status should be available since no owner
+        owner='',  # No owner expected
+        labels=mock.ANY,
+        cc=[],  # No cc list expected
+        components=[],
         merge_issue=None)
     message = self.add_bug_comment.call_args.kwargs['comment']
     self.assertIn('Found a significant difference at 1 commit.', message)
@@ -372,6 +656,7 @@ class BugCommentTest(test.TestCase):
         status='Assigned',
         owner='author@chromium.org',
         cc=[],
+        components=[],
         labels=mock.ANY,
         merge_issue='111222')
     message = self.add_bug_comment.call_args.kwargs['comment']
@@ -432,6 +717,7 @@ class BugCommentTest(test.TestCase):
         owner='author@chromium.org',
         labels=mock.ANY,
         cc=['author@chromium.org'],
+        components=[],
         merge_issue=None)
     message = self.add_bug_comment.call_args.kwargs['comment']
     self.assertIn('Found a significant difference at 1 commit.', message)
@@ -510,6 +796,7 @@ class BugCommentTest(test.TestCase):
         owner='author@chromium.org',
         labels=mock.ANY,
         cc=['author@chromium.org'],
+        components=[],
         merge_issue=None)
     message = self.add_bug_comment.call_args.kwargs['comment']
     self.assertIn('Found a significant difference at 1 commit.', message)
@@ -550,6 +837,7 @@ class BugCommentTest(test.TestCase):
         owner='author@chromium.org',
         labels=mock.ANY,
         cc=['author@chromium.org'],
+        components=[],
         merge_issue=None)
     message = self.add_bug_comment.call_args.kwargs['comment']
     self.assertIn('Found a significant difference at 1 commit.', message)
@@ -593,6 +881,7 @@ class BugCommentTest(test.TestCase):
         owner='author@chromium.org',
         status=None,
         cc=['author@chromium.org', 'some-author@somewhere.org'],
+        components=[],
         labels=mock.ANY,
         merge_issue=None)
     message = self.add_bug_comment.call_args.kwargs['comment']
@@ -633,6 +922,7 @@ class BugCommentTest(test.TestCase):
         owner=None,
         status=None,
         cc=['author@chromium.org'],
+        components=[],
         labels=mock.ANY,
         merge_issue=None)
     message = self.add_bug_comment.call_args.kwargs['comment']
@@ -697,6 +987,7 @@ class BugCommentTest(test.TestCase):
         status='Assigned',
         owner='author1@chromium.org',
         cc=['author1@chromium.org'],
+        components=[],
         labels=mock.ANY,
         merge_issue=None,
     )
@@ -740,6 +1031,7 @@ class BugCommentTest(test.TestCase):
         status='Assigned',
         owner='author3@chromium.org',
         cc=['author3@chromium.org'],
+        components=[],
         labels=mock.ANY,
         merge_issue=None)
     message = self.add_bug_comment.call_args.kwargs['comment']
@@ -819,6 +1111,7 @@ class BugCommentTest(test.TestCase):
         status='Assigned',
         owner=expected_ccs[0],
         cc=sorted(expected_ccs),
+        components=[],
         labels=mock.ANY,
         merge_issue=None)
     labels = self.add_bug_comment.call_args[1]['labels']
@@ -879,6 +1172,7 @@ class BugCommentTest(test.TestCase):
         status='Assigned',
         owner='author1@chromium.org',
         cc=['author1@chromium.org'],
+        components=[],
         labels=mock.ANY,
         merge_issue=None)
     message = self.add_bug_comment.call_args.kwargs['comment']
@@ -923,6 +1217,7 @@ class BugCommentTest(test.TestCase):
         status='Assigned',
         owner='sheriff@bar.com',
         cc=['chromium-autoroll@skia-public.iam.gserviceaccount.com'],
+        components=[],
         labels=mock.ANY,
         merge_issue=None)
     message = self.add_bug_comment.call_args.kwargs['comment']
@@ -985,6 +1280,7 @@ class BugCommentTest(test.TestCase):
         status='Assigned',
         owner='sheriff@bar.com',
         cc=['chromium-autoroll@skia-public.iam.gserviceaccount.com'],
+        components=[],
         labels=mock.ANY,
         merge_issue=None)
 
@@ -1074,18 +1370,10 @@ class GetIterationCountTest(test.TestCase):
 
   def testEvenlyDivisibleBots(self):
     self.assertEqual(
-        job.GetIterationCount(initial_attempt_count=6, bot_count=6), 6)
+        job.GetIterationCount(initial_attempt_count=6), 6)
     self.assertEqual(
-        job.GetIterationCount(initial_attempt_count=12, bot_count=6), 12)
+        job.GetIterationCount(initial_attempt_count=12), 12)
 
   def testOddAttemptCount(self):
     self.assertEqual(
-        job.GetIterationCount(initial_attempt_count=5, bot_count=6), 6)
-
-  def testMoreBots(self):
-    self.assertEqual(
-        job.GetIterationCount(initial_attempt_count=5, bot_count=17), 6)
-
-  def testLessBots(self):
-    self.assertEqual(
-        job.GetIterationCount(initial_attempt_count=10, bot_count=7), 14)
+        job.GetIterationCount(initial_attempt_count=5), 6)

@@ -13,7 +13,6 @@ import sys
 import uuid
 from six.moves import zip_longest
 
-from google.appengine.api import taskqueue
 from google.appengine.ext import ndb
 
 from dashboard import add_point
@@ -21,7 +20,6 @@ from dashboard import add_point_queue
 from dashboard import find_anomalies
 from dashboard import graph_revisions
 from dashboard import sheriff_config_client
-from dashboard import skia_perf_upload
 from dashboard.common import datastore_hooks
 from dashboard.common import histogram_helpers
 from dashboard.common import utils
@@ -75,6 +73,12 @@ DIAGNOSTIC_NAMES_TO_ANNOTATION_NAMES = {
         'r_fuchsia_zircon_git',
     reserved_infos.REVISION_TIMESTAMPS.name:
         'r_revision_timestamp',
+    reserved_infos.FUCHSIA_INTEGRATION_INTERNAL_REVISIONS.name:
+        'r_fuchsia_integ_int_git',
+    reserved_infos.FUCHSIA_INTEGRATION_PUBLIC_REVISIONS.name:
+        'r_fuchsia_integ_pub_git',
+    reserved_infos.FUCHSIA_SMART_INTEGRATION_REVISIONS.name:
+        'r_fuchsia_smart_integ_git',
 }
 
 
@@ -122,6 +126,7 @@ def AddHistogramsQueuePost():
   try:
     for p in params:
       histogram_futures.append((p, _ProcessRowAndHistogram(p)))
+
   except Exception as e:  # pylint: disable=broad-except
     for param, futures_info in zip_longest(params, histogram_futures):
       if futures_info is not None:
@@ -257,27 +262,18 @@ def _AddRowsFromData(params, revision, parent_test, legacy_parent_tests):
   test_key = parent_test.key
 
   stat_names_to_test_keys = {k: v.key for k, v in legacy_parent_tests.items()}
-  rows = CreateRowEntities(data_dict, test_key, stat_names_to_test_keys,
-                           revision)
-  if not rows:
+  row, stat_name_row_dict = _CreateRowEntitiesInternal(data_dict, test_key,
+                                                       stat_names_to_test_keys,
+                                                       revision)
+  if not row:
     raise ndb.Return()
 
+  rows = [row]
+  if stat_name_row_dict:
+    rows.extend(stat_name_row_dict.values())
   yield ndb.put_multi_async(rows) + [r.UpdateParentAsync() for r in rows]
 
   logging.info('Added %s rows to Datastore', str(len(rows)))
-
-  for row in rows:
-    if hasattr(row, 'r_commit_pos'):
-      row_urlsafe = row.key.urlsafe()
-      taskqueue.add(
-          url='/skia_perf_upload',
-          payload=json.dumps({'rows': [row_urlsafe.decode()]}),
-          queue_name=skia_perf_upload._TASK_QUEUE_NAME,
-      )
-
-  # Disable this log since it's killing the quota of Cloud Logging API -
-  # write requests per minute
-  # logging.debug('Processed %s row entities.', len(rows))
 
   def IsMonitored(client, test):
     reason = []
@@ -384,33 +380,49 @@ def GetUnitArgs(unit):
     unit_args['improvement_direction'] = anomaly.UNKNOWN
   return unit_args
 
-
 def CreateRowEntities(histogram_dict, test_metadata_key,
                       stat_names_to_test_keys, revision):
+  row, stat_name_row_dict = _CreateRowEntitiesInternal(histogram_dict,
+                                                       test_metadata_key,
+                                                       stat_names_to_test_keys,
+                                                       revision)
+
+  if not row:
+    return None
+
+  rows = [row]
+  if stat_name_row_dict:
+    rows.extend(stat_name_row_dict.values())
+
+  return rows
+
+
+def _CreateRowEntitiesInternal(histogram_dict, test_metadata_key,
+                               stat_names_to_test_keys, revision):
   h = histogram_module.Histogram.FromDict(histogram_dict)
   # TODO(#3564): Move this check into _PopulateNumericalFields once we
   # know that it's okay to put rows that don't have a value/error.
   if h.num_values == 0:
-    return None
-
-  rows = []
+    return None, None
 
   row_dict = _MakeRowDict(revision, test_metadata_key.id(), h)
-  rows.append(
-      graph_data.Row(
-          id=revision,
-          parent=utils.GetTestContainerKey(test_metadata_key),
-          **add_point.GetAndValidateRowProperties(row_dict)))
+  parent_test_key = utils.GetTestContainerKey(test_metadata_key)
+  row = graph_data.Row(
+      id=revision,
+      parent=parent_test_key,
+      **add_point.GetAndValidateRowProperties(row_dict))
 
+  stat_name_row_dict = {}
   for stat_name, suffixed_key in stat_names_to_test_keys.items():
+    suffixed_parent_test_key = utils.GetTestContainerKey(suffixed_key)
     row_dict = _MakeRowDict(revision, suffixed_key.id(), h, stat_name=stat_name)
-    rows.append(
-        graph_data.Row(
-            id=revision,
-            parent=utils.GetTestContainerKey(suffixed_key),
-            **add_point.GetAndValidateRowProperties(row_dict)))
+    new_row = graph_data.Row(
+        id=revision,
+        parent=suffixed_parent_test_key,
+        **add_point.GetAndValidateRowProperties(row_dict))
+    stat_name_row_dict[stat_name] = new_row
 
-  return rows
+  return row, stat_name_row_dict
 
 
 def _MakeRowDict(revision, test_path, tracing_histogram, stat_name=None):
@@ -435,7 +447,11 @@ def _MakeRowDict(revision, test_path, tracing_histogram, stat_name=None):
     bot_id_name = tracing_histogram.diagnostics.get(
         reserved_infos.BOT_ID.name)
     if bot_id_name:
-      d['supplemental_columns']['a_bot_id'] = list(bot_id_name)
+      bot_id_names = list(bot_id_name)
+      d['supplemental_columns']['a_bot_id'] = bot_id_names
+      if len(bot_id_names) == 1:
+        d['swarming_bot_id'] = bot_id_names[0]
+
   except Exception as e: # pylint: disable=broad-except
     logging.warning('bot_id failed. Error: %s', e)
   try:

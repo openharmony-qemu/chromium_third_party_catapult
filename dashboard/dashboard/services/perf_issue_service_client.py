@@ -6,6 +6,7 @@
 from __future__ import absolute_import
 
 import logging
+import urllib.parse
 
 from dashboard.common import cloud_metric
 from dashboard.common import utils
@@ -126,6 +127,49 @@ def PostIssueComment(issue_id, project_name='chromium', **kwargs):
     return []
 
 
+def GetDuplicateGroupKeys(group_key):
+  url = _SERVICE_URL + _ALERT_GROUP_PREFIX
+  url += '%s/duplicates' % group_key
+  try:
+    cloud_metric.PublishPerfIssueServiceRequests('GetDuplicateGroupKeys', 'GET',
+                                                 url, {'group_key': group_key})
+    resp = request.RequestJson(url, method='GET')
+    return resp
+  except request.RequestError as e:
+    cloud_metric.PublishPerfIssueServiceRequestFailures(
+        'GetDuplicateGroupKeys', 'GET', url, {'group_key': group_key})
+    logging.error(
+        '[PerfIssueService] Error requesting duplicates by group key: %s. %s',
+        group_key, str(e))
+    return []
+
+
+def GetCanonicalGroupByIssue(current_group_key, issue_id, project_name):
+  url = _SERVICE_URL + _ALERT_GROUP_PREFIX
+  url += '%s/canonical/issue_id/%s/project_name/%s' % (current_group_key,
+                                                       issue_id, project_name)
+  try:
+    cloud_metric.PublishPerfIssueServiceRequests(
+        'GetCanonicalGroupByIssue', 'GET', url, {
+            'current_group_key': current_group_key,
+            'issue_id': issue_id,
+            'project_name': project_name
+        })
+    resp = request.RequestJson(url, method='GET')
+    return resp
+  except request.RequestError as e:
+    cloud_metric.PublishPerfIssueServiceRequestFailures(
+        'GetCanonicalGroupByIssue', 'GET', url, {
+            'current_group_key': current_group_key,
+            'issue_id': issue_id,
+            'project_name': project_name
+        })
+    logging.error(
+        '[PerfIssueService] Error requesting canonical group. Group: %s. ID: %s. Project: %s. %s',
+        current_group_key, issue_id, project_name, str(e))
+    return []
+
+
 def GetAnomaliesByAlertGroupID(group_id):
   url = _SERVICE_URL + _ALERT_GROUP_PREFIX
   url += '%s/anomalies' % group_id
@@ -138,7 +182,98 @@ def GetAnomaliesByAlertGroupID(group_id):
   except request.RequestError as e:
     cloud_metric.PublishPerfIssueServiceRequestFailures(
         'GetAnomaliesByAlertGroupID', 'GET', url, {'group_id': group_id})
-    logging.warning(
+    logging.error(
         '[PerfIssueService] Error requesting anomalies by group id: %s. %s',
         group_id, str(e))
     return []
+
+
+def GetAlertGroupsForAnomaly(anomaly):
+  test_key = utils.TestPath(anomaly.test)
+  start_rev = anomaly.start_revision
+  end_rev = anomaly.end_revision
+  subs_name = anomaly.matching_subscription.name
+
+  url = _SERVICE_URL + _ALERT_GROUP_PREFIX
+  # use quote() instead of quote_plus. otherwise test_key with spaces
+  # will be encoded to '+'.
+  if subs_name:
+    url += 'test/%s/start/%s/end/%s/sub/%s' % (urllib.parse.quote(test_key),
+                                               start_rev, end_rev, subs_name)
+  else:
+    url += 'test/%s/start/%s/end/%s' % (urllib.parse.quote(test_key), start_rev,
+                                        end_rev)
+
+  try:
+    cloud_metric.PublishPerfIssueServiceRequests('GetAlertGroupsForAnomaly',
+                                                 'GET', url,
+                                                 {'test_key': test_key})
+    resp = request.RequestJson(url, method='GET')
+    return resp
+  except request.RequestError as e:
+    cloud_metric.PublishPerfIssueServiceRequestFailures(
+        'GetAlertGroupsForAnomaly', 'GET', url, {'test_key': test_key})
+    logging.error(
+        '[PerfIssueService] Error requesting groups by anomaly: %s. %s',
+        test_key, str(e))
+    return []
+
+
+def GetAllActiveAlertGroups(group_type: int):
+  url = _SERVICE_URL + _ALERT_GROUP_PREFIX
+  url += 'all'
+
+  try:
+    cloud_metric.PublishPerfIssueServiceRequests('GetAllActiveAlertGroups',
+                                                 'GET', url, {})
+    resp = request.RequestJson(url, method='GET', group_type=group_type)
+    return resp
+  except request.RequestError as e:
+    cloud_metric.PublishPerfIssueServiceRequestFailures(
+        'GetAllActiveAlertGroups', 'GET', url, {})
+    logging.error('[PerfIssueService] Error requesting all groups: %s', str(e))
+    return []
+
+
+def PostUngroupedAlerts(group_type: int):
+  url = _SERVICE_URL + _ALERT_GROUP_PREFIX
+  url += 'ungrouped'
+
+  try:
+    cloud_metric.PublishPerfIssueServiceRequests('PostUngroupedAlerts', 'POST',
+                                                 url, {})
+    resp = request.RequestJson(url, method='POST', group_type=group_type)
+    return resp
+  except request.RequestError as e:
+    cloud_metric.PublishPerfIssueServiceRequestFailures('PostUngroupedAlerts',
+                                                        'POST', url, {})
+    logging.error('[PerfIssueService] Error updating ungrouped alerts: %s',
+                  str(e))
+    return {}
+
+
+def GetAlertGroupQuality(job_id, commit):
+  commit_dict = commit.AsDict()
+  logging.debug(
+      '[GroupingQuality] Getting grouping quality for %s on commit %s.', job_id,
+      commit_dict)
+  commit_position = commit_dict.get('commit_position', None)
+  if not commit_position:
+    logging.debug(
+        '[GroupingQuality] commit position is not found in commit %s.', commit)
+    return {}
+
+  url = _SERVICE_URL + _ALERT_GROUP_PREFIX
+  url += 'alert_group_quality/job_id/%s/commit/%s' % (job_id, commit_position)
+
+  try:
+    cloud_metric.PublishPerfIssueServiceRequests('GetAlertGroupQuality', 'GET',
+                                                 url, {})
+    resp = request.RequestJson(url, method='GET')
+    return resp
+  except request.RequestError as e:
+    cloud_metric.PublishPerfIssueServiceRequestFailures('GetAlertGroupQuality',
+                                                        'GET', url, {})
+    logging.error('[PerfIssueService] Error getting alert group quality: %s',
+                  str(e))
+    return {}

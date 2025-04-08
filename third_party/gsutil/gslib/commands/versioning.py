@@ -28,6 +28,8 @@ from gslib.exception import NO_URLS_MATCHED_TARGET
 from gslib.help_provider import CreateHelpText
 from gslib.third_party.storage_apitools import storage_v1_messages as apitools_messages
 from gslib.utils.constants import NO_MAX
+from gslib.utils.shim_util import GcloudStorageMap
+from gslib.utils import shim_util
 
 _SET_SYNOPSIS = """
   gsutil versioning set (on|off) gs://<bucket_name>...
@@ -63,6 +65,11 @@ _DESCRIPTION = """
 """ + _SET_DESCRIPTION + _GET_DESCRIPTION
 
 _DETAILED_HELP_TEXT = CreateHelpText(_SYNOPSIS, _DESCRIPTION)
+
+_GCLOUD_FORMAT_STRING = ('--format=value[separator=""](' + 'name.sub("' +
+                         shim_util.get_format_flag_caret() +
+                         '", "gs://").sub("$", ": "),' + 'versioning.enabled' +
+                         '.yesno("Enabled", "Suspended"))')
 
 _get_help_text = CreateHelpText(_GET_SYNOPSIS, _GET_DESCRIPTION)
 _set_help_text = CreateHelpText(_SET_SYNOPSIS, _SET_DESCRIPTION)
@@ -107,6 +114,47 @@ class VersioningCommand(Command):
           'get': _get_help_text,
           'set': _set_help_text,
       },
+  )
+
+  gcloud_storage_map = GcloudStorageMap(
+      gcloud_command={
+          'get':
+              GcloudStorageMap(
+                  gcloud_command=[
+                      'storage', 'buckets', 'list', '--raw',
+                      _GCLOUD_FORMAT_STRING
+                  ],
+                  flag_map={},
+                  supports_output_translation=True,
+              ),
+          'set':
+              GcloudStorageMap(
+                  gcloud_command={
+                      'on':
+                          GcloudStorageMap(
+                              gcloud_command=[
+                                  'storage',
+                                  'buckets',
+                                  'update',
+                                  '--versioning',
+                              ],
+                              flag_map={},
+                          ),
+                      'off':
+                          GcloudStorageMap(
+                              gcloud_command=[
+                                  'storage',
+                                  'buckets',
+                                  'update',
+                                  '--no-versioning',
+                              ],
+                              flag_map={},
+                          ),
+                  },
+                  flag_map={},
+              )
+      },
+      flag_map={},
   )
 
   def _CalculateUrlsStartArg(self):

@@ -19,8 +19,11 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import unicode_literals
 
+import os
+
 from apitools.base.py import encoding
 from gslib import metrics
+from gslib import gcs_json_api
 from gslib.cloud_api import AccessDeniedException
 from gslib.cloud_api import BadRequestException
 from gslib.cloud_api import PreconditionException
@@ -35,13 +38,16 @@ from gslib.exception import CommandException
 from gslib.help_provider import CreateHelpText
 from gslib.storage_url import StorageUrlFromString
 from gslib.storage_url import UrlsAreForSingleProvider
+from gslib.storage_url import RaiseErrorIfUrlsAreMixOfBucketsAndObjects
 from gslib.third_party.storage_apitools import storage_v1_messages as apitools_messages
 from gslib.utils import acl_helper
 from gslib.utils.constants import NO_MAX
 from gslib.utils.retry_util import Retry
+from gslib.utils.shim_util import GcloudStorageFlag
+from gslib.utils.shim_util import GcloudStorageMap
 
 _SET_SYNOPSIS = """
-  gsutil acl set [-f] [-r] [-a] <file-or-canned_acl_name> url...
+  gsutil acl set [-f] [-r] [-a] (<file-path>|<predefined-acl>) url...
 """
 
 _GET_SYNOPSIS = """
@@ -61,30 +67,31 @@ _CH_SYNOPSIS = """
 
 _GET_DESCRIPTION = """
 <B>GET</B>
-  The "acl get" command gets the ACL text for a bucket or object, which you can
-  save and edit for the acl set command.
+  The ``acl get`` command gets the ACL text for a bucket or object, which you
+  can save and edit for the acl set command.
 """
 
 _SET_DESCRIPTION = """
 <B>SET</B>
-  The "acl set" command allows you to set an Access Control List on one or
-  more buckets and objects. The file-or-canned_acl_name parameter names either
-  a canned ACL or the path to a file that contains ACL text. The simplest way
-  to use the "acl set" command is to specify one of the canned ACLs, e.g.,:
+  The ``acl set`` command allows you to set an Access Control List on one or
+  more buckets and objects. As part of the command, you must specify either a
+  predefined ACL or the path to a file that contains ACL text. The simplest way
+  to use the ``acl set`` command is to specify one of the predefined ACLs,
+  e.g.,:
 
-    gsutil acl set private gs://bucket
+    gsutil acl set private gs://example-bucket/example-object
 
   If you want to make an object or bucket publicly readable or writable, it is
-  recommended to use "acl ch", to avoid accidentally removing OWNER permissions.
-  See the "acl ch" section for details.
+  recommended to use ``acl ch``, to avoid accidentally removing OWNER
+  permissions. See the ``acl ch`` section for details.
 
   See `Predefined ACLs
   <https://cloud.google.com/storage/docs/access-control/lists#predefined-acl>`_
-  for a list of canned ACLs.
+  for a list of predefined ACLs.
 
   If you want to define more fine-grained control over your data, you can
-  retrieve an ACL using the "acl get" command, save the output to a file, edit
-  the file, and then use the "acl set" command to set that ACL on the buckets
+  retrieve an ACL using the ``acl get`` command, save the output to a file, edit
+  the file, and then use the ``acl set`` command to set that ACL on the buckets
   and/or objects. For example:
 
     gsutil acl get gs://bucket/file.txt > acl.txt
@@ -143,7 +150,7 @@ _CH_DESCRIPTION = """
 
   Grant anyone on the internet READ access to the object example-object:
 
-    gsutil acl ch -u AllUsers:R gs://example-bucket/example-object
+    gsutil acl ch -u allUsers:R gs://example-bucket/example-object
 
   NOTE: By default, publicly readable objects are served with a Cache-Control
   header allowing such objects to be cached for 3600 seconds. If you need to
@@ -151,16 +158,10 @@ _CH_DESCRIPTION = """
   Cache-Control header of "Cache-Control:private, max-age=0, no-transform" on
   such objects. For help doing this, see "gsutil help setmeta".
 
-  Grant anyone on the internet WRITE access to the bucket example-bucket:
-  
-  WARNING: this is not recommended as you will be responsible for the content
+  Grant the user john.doe@example.com READ access to all objects
+  in example-bucket that begin with folder/:
 
-    gsutil acl ch -u AllUsers:W gs://example-bucket
-
-  Grant the user john.doe@example.com WRITE access to the bucket
-  example-bucket:
-
-    gsutil acl ch -u john.doe@example.com:WRITE gs://example-bucket
+    gsutil acl ch -r -u john.doe@example.com:R gs://example-bucket/folder/
 
   Grant the group admins@example.com OWNER access to all jpg files in
   example-bucket:
@@ -187,13 +188,6 @@ _CH_DESCRIPTION = """
   Note that removing a project requires you to reference the project by
   its number (which you can see with the acl get command) as opposed to its
   project ID string.
-
-  Grant the user with the specified canonical ID READ access to all objects
-  in example-bucket that begin with folder/:
-
-    gsutil acl ch -r \\
-      -u 84fac329bceSAMPLE777d5d22b8SAMPLE785ac2SAMPLE2dfcf7c4adf34da46:R \\
-      gs://example-bucket/folder/
 
   Grant the service account foo@developer.gserviceaccount.com WRITE access to
   the bucket example-bucket:
@@ -248,12 +242,12 @@ _CH_DESCRIPTION = """
   "-g power-users@example.com:O". Groups may also be specified as a full
   domain, as in "-g my-company.com:r".
 
-  AllAuthenticatedUsers and AllUsers are specified directly, as
-  in "-g AllUsers:R" or "-g AllAuthenticatedUsers:O". These are case
+  allAuthenticatedUsers and allUsers are specified directly, as
+  in "-g allUsers:R" or "-g allAuthenticatedUsers:O". These are case
   insensitive, and may be shortened to "all" and "allauth", respectively.
 
   Removing roles is specified with the -d flag and an ID, email
-  address, domain, or one of AllUsers or AllAuthenticatedUsers.
+  address, domain, or one of allUsers or allAuthenticatedUsers.
 
   Many entities' roles can be specified on the same command line, allowing
   bundled changes to be executed in a single run. This will reduce the number of
@@ -339,6 +333,80 @@ class AclCommand(Command):
           'ch': _ch_help_text
       },
   )
+
+  def _get_shim_command_group(self):
+    object_or_bucket_urls = [StorageUrlFromString(url) for url in self.args]
+    recurse = False
+    for (flag_key, _) in self.sub_opts:
+      if flag_key in ('-r', '-R'):
+        recurse = True
+        break
+    RaiseErrorIfUrlsAreMixOfBucketsAndObjects(object_or_bucket_urls, recurse)
+
+    if object_or_bucket_urls[0].IsBucket() and not recurse:
+      return 'buckets'
+    else:
+      return 'objects'
+
+  def get_gcloud_storage_args(self):
+    sub_command = self.args.pop(0)
+    if sub_command == 'get':
+      if StorageUrlFromString(self.args[0]).IsObject():
+        command_group = 'objects'
+      else:
+        command_group = 'buckets'
+      gcloud_storage_map = GcloudStorageMap(gcloud_command=[
+          'storage', command_group, 'describe',
+          '--format=multi(acl:format=json)', '--raw'
+      ],
+                                            flag_map={})
+
+    elif sub_command == 'set':
+      # Flags must be at the start of self.args to get parsed.
+      self.ParseSubOpts()
+      acl_file_or_predefined_acl = self.args.pop(0)
+      if os.path.isfile(acl_file_or_predefined_acl):
+        acl_flag = '--acl-file=' + acl_file_or_predefined_acl
+      else:
+        if acl_file_or_predefined_acl in (
+            gcs_json_api.FULL_PREDEFINED_ACL_XML_TO_JSON_TRANSLATION):
+          predefined_acl = (
+              gcs_json_api.FULL_PREDEFINED_ACL_XML_TO_JSON_TRANSLATION[
+                  acl_file_or_predefined_acl])
+        else:
+          predefined_acl = acl_file_or_predefined_acl
+        acl_flag = '--predefined-acl=' + predefined_acl
+
+      command_group = self._get_shim_command_group()
+
+      gcloud_storage_map = GcloudStorageMap(
+          gcloud_command=['storage', command_group, 'update'] + [acl_flag],
+          flag_map={
+              '-a': GcloudStorageFlag('--all-versions'),
+              '-f': GcloudStorageFlag('--continue-on-error'),
+              '-R': GcloudStorageFlag('--recursive'),
+              '-r': GcloudStorageFlag('--recursive'),
+          })
+
+    elif sub_command == 'ch':
+      self.ParseSubOpts()
+      self.sub_opts = acl_helper.translate_sub_opts_for_shim(self.sub_opts)
+      command_group = self._get_shim_command_group()
+
+      gcloud_storage_map = GcloudStorageMap(
+          gcloud_command=['storage', command_group, 'update'],
+          flag_map={
+              '-g': GcloudStorageFlag('--add-acl-grant'),
+              '-p': GcloudStorageFlag('--add-acl-grant'),
+              '-u': GcloudStorageFlag('--add-acl-grant'),
+              '-d': GcloudStorageFlag('--remove-acl-grant'),
+              '-a': GcloudStorageFlag('--all-versions'),
+              '-f': GcloudStorageFlag('--continue-on-error'),
+              '-R': GcloudStorageFlag('--recursive'),
+              '-r': GcloudStorageFlag('--recursive'),
+          })
+
+    return super().get_gcloud_storage_args(gcloud_storage_map)
 
   def _CalculateUrlsStartArg(self):
     if not self.args:

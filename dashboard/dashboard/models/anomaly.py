@@ -96,6 +96,8 @@ class Anomaly(internal_only_model.InternalOnlyModel):
   # We'd like to be able to query Alerts by Master, Bot, and Benchmark names.
   master_name = ndb.ComputedProperty(
       lambda self: utils.TestPath(self.test).split('/')[0], indexed=True)
+  # This is not the "bot_name" as in "the id of the physical hardware device in the perf lab"
+  # but rather the "bot_name" as in "the name of device configuration" e.g. "win-10-perf"
   bot_name = ndb.ComputedProperty(
       lambda self: utils.TestPath(self.test).split('/')[1], indexed=True)
   benchmark_name = ndb.ComputedProperty(
@@ -165,6 +167,9 @@ class Anomaly(internal_only_model.InternalOnlyModel):
   # is an anomaly. We use this to compute time-to-detection.
   earliest_input_timestamp = ndb.DateTimeProperty()
   latest_input_timestamp = ndb.DateTimeProperty()
+
+  # Source generating this anomaly entity (eg: chromeperf, skia)
+  source = ndb.StringProperty(indexed=False)
 
   @property
   def percent_changed(self):
@@ -247,7 +252,9 @@ class Anomaly(internal_only_model.InternalOnlyModel):
                  test=None,
                  test_keys=None,
                  test_suite_name=None,
-                 project_id=None):
+                 project_id=None,
+                 master_names=None,
+                 internal_only=None):
     if key:
       # This tasklet isn't allowed to catch the internal_only AssertionError.
       alert = yield ndb.Key(urlsafe=key).get_async()
@@ -297,9 +304,22 @@ class Anomaly(internal_only_model.InternalOnlyModel):
         query = query.order(cls.key)
         equality_properties.append('test')
         inequality_property = 'key'
+
+      if master_name and master_names:
+        logging.warning(
+            'Cannot have both master_name and master_names in anomally query.')
       if master_name:
         query = query.filter(cls.master_name == master_name)
         equality_properties.append('master_name')
+        inequality_property = 'key'
+      elif master_names:
+        query = query.filter(cls.master_name.IN(master_names))
+        equality_properties.append('master_name')
+        inequality_property = 'key'
+
+      if internal_only is not None:
+        query = query.filter(cls.internal_only == internal_only)
+        equality_properties.append('internal_only')
         inequality_property = 'key'
       if bot_name:
         query = query.filter(cls.bot_name == bot_name)

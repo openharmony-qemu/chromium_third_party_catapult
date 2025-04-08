@@ -102,7 +102,10 @@ def _SplitShardsByTime(test_cases, total_shards, test_times,
   shards = []
   for i in range(total_shards):
     shards.append({'total_time': 0.0, 'tests': []})
-  test_cases.sort(key=lambda t: _TestTime(t, test_times, median),
+  # Sort by test time first, falling back to the test name in the case of a tie
+  # so that ordering is consistent across all shards.
+  test_cases.sort(key=lambda t: (_TestTime(t, test_times, median),
+                                 t.shortName()),
                   reverse=True)
 
   # The greedy algorithm has been empirically tested on the WebGL 2.0
@@ -171,9 +174,46 @@ def LoadTestCasesToBeRun(
   return [test_cases[index] for index in test_indices]
 
 
+def _RemoveArgFromParser(parser, arg):
+  # argparse doesn't have a simple way to remove an argument after it has been
+  # added, so use the logic from https://stackoverflow.com/a/49753634.
+  # pylint: disable=protected-access
+  for action in parser._actions:
+    option_strings = action.option_strings
+    if (option_strings and option_strings[0] == arg
+        or action.dest == arg):
+      parser._remove_action(action)
+      break
+  for action in parser._action_groups:
+    for group_action in action._group_actions:
+      option_strings = group_action.option_strings
+      if (option_strings and option_strings[0] == arg
+          or group_action.dest == arg):
+        action._group_actions.remove(group_action)
+        return
+  # pylint: enable=protected-access
+
+
 def _CreateTestArgParsers():
   parser = typ.ArgumentParser(discovery=True, reporting=True, running=True)
   parser.add_argument('test', type=str, help='Name of the test suite to run')
+
+  # We remove typ's "tests" positional argument because we don't use it/pass it
+  # on to typ AND it can result in unexpected behavior, particularly if the
+  # underlying test suite does its own argument parsing. As a concrete example,
+  # consider the args:
+  #   test_suite "--extra-browser-args=--foo --bar"
+  # In this case, --extra-browser-args is only known to the underlying suite,
+  # not to run_browser_test.py or typ. A user would expect this to run the
+  # test_suite suite and pass the --extra-browser-args on to the suite. However,
+  # if both "tests" and "test" are added to the parser, then we end up with
+  # tests=['test_suite'] and test='--extra-browser-args ...' since
+  # --extra-browser-args looks like a positional argument to the parser. This
+  # can be worked around by having a known argument immediately after the suite,
+  # e.g.
+  #   test_suite --jobs 1 "--extra-browser-args=--foo --bar"
+  # but simply removing "tests" here works around the issue entirely.
+  _RemoveArgFromParser(parser, 'tests')
 
   parser.add_argument(
       '--filter-tests-after-sharding', default=False, action='store_true',
@@ -306,6 +346,7 @@ def RunTests(args):
   typ_runner.path_delimiter = test_class.GetJSONResultsDelimiter()
   typ_runner.setup_fn = _SetUpProcess
   typ_runner.teardown_fn = _TearDownProcess
+  typ_runner.tag_conflict_checker = test_class.GetTagConflictChecker()
 
   tests_to_run = LoadTestCasesToBeRun(
       test_class=test_class, finder_options=typ_runner.context.finder_options,
@@ -317,7 +358,9 @@ def RunTests(args):
   for t in tests_to_run:
     typ_runner.context.test_case_ids_to_run.add(t.id())
   typ_runner.context.Freeze()
+  # pylint: disable=protected-access
   browser_test_context._global_test_context = typ_runner.context
+  # pylint: enable=protected-access
 
   # several class level variables are set for GPU tests  when
   # LoadTestCasesToBeRun is called. Functions line ExpectationsFiles and
@@ -365,7 +408,9 @@ def _SetUpProcess(child, context):
     android_devices.sort(key=lambda device: device.name)
     args.remote_platform_options.device = (
         android_devices[child.worker_num-1].guid)
+  # pylint: disable=protected-access
   browser_test_context._global_test_context = context
+  # pylint: enable=protected-access
   # typ will set this later as well, but set it earlier so that it's available
   # in the test class process setup.
   context.test_class.child = child
@@ -374,8 +419,10 @@ def _SetUpProcess(child, context):
 
 def _TearDownProcess(child, context):
   del child, context  # Unused.
+  # pylint: disable=protected-access
   browser_test_context._global_test_context.test_class.TearDownProcess()
   browser_test_context._global_test_context = None
+  # pylint: enable=protected-access
 
 
 if __name__ == '__main__':

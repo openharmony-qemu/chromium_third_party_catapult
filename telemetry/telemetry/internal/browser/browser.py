@@ -218,13 +218,20 @@ class Browser(app.App):
        See the documentation of the SystemInfo class for more details."""
     return self._browser_backend.GetSystemInfo()
 
+  def GetVersionInfo(self):
+    """Returns browser version information.
+
+    Returns: A dict containing available version information for the browser.
+    """
+    return self._browser_backend.GetVersionInfo()
+
   @property
   def supports_memory_dumping(self):
     return self._browser_backend.supports_memory_dumping
 
-  def DumpMemory(self, timeout=None):
+  def DumpMemory(self, timeout=None, deterministic=False):
     try:
-      return self._browser_backend.DumpMemory(timeout=timeout)
+      return self._browser_backend.DumpMemory(timeout=timeout, deterministic=deterministic)
     except tracing_backend.TracingUnrecoverableException as e:
       logging.exception('Failed to record memory dump due to exception:')
       # Re-raise as an AppCrashException to obtain further debug information

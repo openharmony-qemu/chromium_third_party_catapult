@@ -9,7 +9,7 @@ from __future__ import absolute_import
 import sys
 import unittest
 
-import mock
+from unittest import mock
 
 from google.appengine.ext import ndb
 
@@ -195,6 +195,12 @@ class ProcessAlertsTest(testing_common.TestCase):
   def _DataSeries(self):
     return [(r.revision, r, r.value) for r in list(graph_data.Row.query())]
 
+  def _GetGroupsForAnomalyMock(self, anomaly_entity):
+    group_keys = alert_group.AlertGroup.GetGroupsForAnomaly(
+        anomaly_entity, None)
+    group_ids = [k.string_id() for k in group_keys]
+    return group_ids
+
   @mock.patch.object(find_anomalies.find_change_points, 'FindChangePoints',
                      mock.MagicMock(return_value=[
                          _MakeSampleChangePoint(10011, 50, 100),
@@ -203,6 +209,12 @@ class ProcessAlertsTest(testing_common.TestCase):
                      ]))
   @mock.patch.object(find_anomalies.email_sheriff, 'EmailSheriff')
   def testProcessTest(self, mock_email_sheriff):
+    perf_comment_post_patcher = mock.patch(
+        'dashboard.services.perf_issue_service_client.GetAlertGroupsForAnomaly',
+        self._GetGroupsForAnomalyMock)
+    perf_comment_post_patcher.start()
+    self.addCleanup(perf_comment_post_patcher.stop)
+
     self._AddDataForTests()
     test_path = 'ChromiumGPU/linux-release/scrolling_benchmark/ref'
     test = utils.TestKey(test_path).get()
@@ -210,6 +222,7 @@ class ProcessAlertsTest(testing_common.TestCase):
     test.put()
 
     alert_group_key1 = alert_group.AlertGroup(
+        id='group_id_1',
         name='scrolling_benchmark',
         domain='ChromiumGPU',
         subscription_name='sheriff1',
@@ -219,6 +232,7 @@ class ProcessAlertsTest(testing_common.TestCase):
             repository='chromium', start=10000, end=10070),
     ).put()
     alert_group_key2 = alert_group.AlertGroup(
+        id='group_id_2',
         name='scrolling_benchmark',
         domain='ChromiumGPU',
         subscription_name='sheriff2',
@@ -233,7 +247,7 @@ class ProcessAlertsTest(testing_common.TestCase):
     with mock.patch.object(SheriffConfigClient, 'Match',
                            mock.MagicMock(return_value=([s1, s2], None))) as m:
       find_anomalies.ProcessTests([test.key])
-      self.assertEqual(m.call_args_list, [mock.call(test.key.id())])
+      self.assertEqual(m.call_args_list[0], mock.call(test.key.id()))
     self.ExecuteDeferredTasks('default')
 
     expected_calls = [
@@ -423,7 +437,8 @@ class ProcessAlertsTest(testing_common.TestCase):
       find_anomalies.ProcessTests([test.key])
     self.ExecuteDeferredTasks('default')
 
-    query = graph_data.Row.query(projection=['revision', 'timestamp', 'value'])
+    query = graph_data.Row.query(
+        projection=['revision', 'timestamp', 'value', 'swarming_bot_id'])
     query = query.filter(graph_data.Row.revision > 10062)
     query = query.filter(
         graph_data.Row.parent_test == utils.OldStyleTestKey(test.key))
@@ -662,6 +677,31 @@ class ProcessAlertsTest(testing_common.TestCase):
     self.assertEqual(anomaly.UP, new_anomalies[0].direction)
     self.assertEqual(241533, new_anomalies[0].start_revision)
     self.assertEqual(241546, new_anomalies[0].end_revision)
+
+  def testProcessTest_BotIdBeforeAndAfterNotNoneAndDiffer_ignoreAnomaly(self):
+    testing_common.AddTests(['ChromiumGPU'], ['linux-release'], {
+        'scrolling_benchmark': {
+            'ref': {}
+        },
+    })
+    ref = utils.TestKey(
+        'ChromiumGPU/linux-release/scrolling_benchmark/ref').get()
+    test_container_key = utils.GetTestContainerKey(ref.key)
+    for idx, row in enumerate(_TEST_ROW_DATA):
+      graph_data.Row(
+          id=row[0],
+          value=row[1],
+          parent=test_container_key,
+          swarming_bot_id='device-id-%d' % idx).put()
+    ref.UpdateSheriff()
+    ref.put()
+    s = Subscription(name='sheriff', visibility=VISIBILITY.PUBLIC)
+    with mock.patch.object(SheriffConfigClient, 'Match',
+                           mock.MagicMock(return_value=([s], None))) as m:
+      find_anomalies.ProcessTests([ref.key])
+      self.assertEqual(m.call_args_list, [mock.call(ref.key.id())])
+    new_anomalies = anomaly.Anomaly.query().fetch()
+    self.assertEqual(0, len(new_anomalies))
 
   def testProcessTest_RefineAnomalyPlacement_OffByOneBefore(self):
     testing_common.AddTests(

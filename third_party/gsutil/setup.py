@@ -39,9 +39,9 @@ requires = [
     'argcomplete>=1.9.4',
     'crcmod>=1.7',
     'fasteners>=0.14.1',
-    'gcs-oauth2-boto-plugin>=3.0',
+    'gcs-oauth2-boto-plugin>=3.2',
     'google-apitools>=0.5.32',
-    'httplib2>=0.18',
+    'httplib2==0.20.4',
     'google-reauth>=0.1.0',
     # mock is part of the standard library in Python 3.3 onwards.
     # 3.0.5 is the last version that supports Python 3.3 or lower.
@@ -49,7 +49,10 @@ requires = [
     'monotonic>=1.4',
     'pyOpenSSL>=0.13',
     'retry_decorator>=1.0.0',
-    'six>=1.12.0',
+    'six>=1.16.0',
+    # aiohttp is the extra dependency that contains requests lib.
+    'google-auth[aiohttp]==2.17.0',
+    'google-auth-httplib2>=0.2.0',
 ]
 
 CURDIR = os.path.abspath(os.path.dirname(__file__))

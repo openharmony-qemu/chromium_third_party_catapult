@@ -217,7 +217,9 @@ class TestUtil(testcase.GsUtilUnitTestCase):
         'proxy_user': p_u,
         'proxy_pass': p_s,
         'proxy_rdns': p_d
-    } for p_h in valid_proxy_host for p_s in valid_proxy_pass
+    }
+                                     for p_h in valid_proxy_host
+                                     for p_s in valid_proxy_pass
                                      for p_p in valid_proxy_port
                                      for p_u in valid_proxy_user
                                      for p_t in valid_proxy_types
@@ -309,7 +311,7 @@ class TestUtil(testcase.GsUtilUnitTestCase):
                 httplib2.ProxyInfo(httplib2.socks.PROXY_TYPE_HTTP,
                                    '1.2.3.4',
                                    50,
-                                   proxy_pass='bar'))
+                                   proxy_user='bar'))
       for env_var in ['proxy', 'noproxy', 'garbage']:
         for url_string in ['1.2.3.4:50', 'http://1.2.3.4:50']:
           with SetEnvironmentForTest({env_var: url_string}):

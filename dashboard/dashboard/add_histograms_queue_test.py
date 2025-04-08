@@ -9,7 +9,7 @@ from __future__ import absolute_import
 import copy
 from flask import Flask
 import json
-import mock
+from unittest import mock
 import sys
 import uuid
 import webtest
@@ -18,7 +18,6 @@ from google.appengine.ext import ndb
 
 from dashboard import add_histograms_queue
 from dashboard import find_anomalies
-from dashboard import skia_perf_upload
 from dashboard.common import testing_common
 from dashboard.common import utils
 from dashboard.models import anomaly
@@ -82,11 +81,6 @@ flask_app = Flask(__name__)
 @flask_app.route('/add_histograms_queue', methods=['GET', 'POST'])
 def AddHistogramsQueuePost():
   return add_histograms_queue.AddHistogramsQueuePost()
-
-
-@flask_app.route('/skia_perf_upload', methods=['POST'])
-def SkiaPerfUploadPost():
-  return skia_perf_upload.SkiaPerfUploadPost()
 
 
 @mock.patch('dashboard.common.cloud_metric._PublishTSCloudMetric',
@@ -164,6 +158,57 @@ class AddHistogramsQueueTest(testing_common.TestCase):
 
     rows = graph_data.Row.query().fetch()
     self.assertEqual(7, len(rows))
+    self.assertEqual(None, rows[0].swarming_bot_id)
+
+  def testPostHistogram_Internal_swarmingBotId(self):
+    test_path = 'Chromium/win7/suite/metric'
+    h2 = copy.deepcopy(TEST_HISTOGRAM)
+    h2['diagnostics'][reserved_infos.BOT_ID.name] = {
+        'type': 'GenericSet',
+        'values': ['swarming-bot-id-0'],
+    }
+
+    params = [{
+        'data': h2,
+        'test_path': test_path,
+        'benchmark_description': None,
+        'revision': 123
+    }]
+    self.testapp.post('/add_histograms_queue', json.dumps(params))
+
+    histograms = histogram.Histogram.query().fetch()
+    self.assertEqual(1, len(histograms))
+
+    rows = graph_data.Row.query().fetch()
+    self.assertEqual(7, len(rows))
+    self.assertEqual('swarming-bot-id-0', rows[0].swarming_bot_id)
+
+  def testPostHistogram_Internal_invalidSwarmingBotId(self):
+    test_path = 'Chromium/win7/suite/metric'
+    h2 = copy.deepcopy(TEST_HISTOGRAM)
+    h2['diagnostics'][reserved_infos.BOT_ID.name] = {
+        'type':
+            'GenericSet',
+        'values': [
+            'swarming-bot-id-0', 'swarming-bot-id-1', 'swarming-bot-id-2',
+            'swarming-bot-id-3'
+        ],
+    }
+
+    params = [{
+        'data': h2,
+        'test_path': test_path,
+        'benchmark_description': None,
+        'revision': 123
+    }]
+    self.testapp.post('/add_histograms_queue', json.dumps(params))
+
+    histograms = histogram.Histogram.query().fetch()
+    self.assertEqual(1, len(histograms))
+
+    rows = graph_data.Row.query().fetch()
+    self.assertEqual(7, len(rows))
+    self.assertEqual(None, rows[0].swarming_bot_id)
 
   def testPostHistogram_WithFreshDiagnostics(self):
     graph_data.Bot(

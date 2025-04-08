@@ -16,6 +16,7 @@ from six.moves import http_client
 from six.moves import map  # pylint: disable=redefined-builtin
 
 from dashboard.common import math_utils
+from dashboard.models import anomaly
 from dashboard.pinpoint.models import attempt as attempt_module
 from dashboard.pinpoint.models import change as change_module
 from dashboard.pinpoint.models import compare
@@ -26,7 +27,7 @@ from dashboard.pinpoint.models import exploration
 # attempts max (that's 4 iterations).
 MIN_ATTEMPTS = 10
 MAX_ATTEMPTS = 160
-MAX_BUILDS = 30
+MAX_BUILDS = 60
 _DEFAULT_SPECULATION_LEVELS = 1
 
 FUNCTIONAL = 'functional'
@@ -69,6 +70,9 @@ class JobState:
 
     self._comparison_mode = comparison_mode
     self._comparison_magnitude = comparison_magnitude
+    # only bisections and verification jobs care about the improvement direction
+    # assume unknown until specified
+    self._improvement_direction = anomaly.UNKNOWN
 
     self._pin = pin
 
@@ -134,7 +138,10 @@ class JobState:
     if len(self._changes) > MAX_BUILDS:
       raise errors.BuildNumberExceeded(MAX_BUILDS)
 
-  def Explore(self):
+  def SetImprovementDirection(self, improvement_direction):
+    self._improvement_direction = improvement_direction
+
+  def Explore(self, benchmark_arguments=None, job_id=None):
     """Compare Changes and bisect by adding additional Changes as needed.
 
     For every pair of adjacent Changes, compare their results as probability
@@ -151,8 +158,9 @@ class JobState:
     if not self._changes:
       return
 
-    def DetectChange(change_a, change_b):
-      comparison = self._Compare(change_a, change_b)
+    def DetectChange(change_a, change_b, benchmark_arguments=None, job_id=None):
+      comparison = self._Compare(change_a, change_b, benchmark_arguments,
+                                 job_id)
       # We return None if the comparison determines that the result is
       # inconclusive.
       if comparison == compare.UNKNOWN:
@@ -179,6 +187,8 @@ class JobState:
         return change_module.Change.Midpoint(change_a, change_b)
       except change_module.NonLinearError:
         return None
+      except change_module.DepsParsingError as e:
+        raise errors.RecoverableError(e)
 
     try:
       additional_changes = exploration.Speculate(
@@ -186,7 +196,9 @@ class JobState:
           change_detected=DetectChange,
           on_unknown=CollectChangesToRefine,
           midpoint=FindMidpoint,
-          levels=_DEFAULT_SPECULATION_LEVELS)
+          levels=_DEFAULT_SPECULATION_LEVELS,
+          benchmark_arguments=benchmark_arguments,
+          job_id=job_id)
       logging.debug('Refinement list: %s', changes_to_refine)
       for change in changes_to_refine:
         self.AddAttempts(change)
@@ -203,8 +215,10 @@ class JobState:
     for attempts in self._attempts.values():
       for attempt in attempts:
         if attempt.completed:
+          logging.debug('JobQueueDebug: attempt completed. %s', attempt)
           continue
 
+        logging.debug('JobQueueDebug: attempt scheduling new work. %s', attempt)
         attempt.ScheduleWork()
         work_left = True
 
@@ -295,7 +309,7 @@ class JobState:
         ]
     }
 
-  def _Compare(self, change_a, change_b):
+  def _Compare(self, change_a, change_b, benchmark_arguments=None, job_id=None):
     """Compare the results of two Changes in this Job.
 
     Aggregate the exceptions and result_values across every Quest for both
@@ -342,13 +356,14 @@ class JobState:
             comparison_magnitude = 0.5
         else:
           comparison_magnitude = 1.0
-        comparison, _, _, _ = compare.Compare(
-            exceptions_a,
-            exceptions_b,
-            attempt_count,
-            FUNCTIONAL,
-            comparison_magnitude,
-        )
+
+        logging.debug('BisectDebug: Functional Comparing exceptions: %s, %s',
+            exceptions_a, exceptions_b)
+        comparison, _, _, _ = compare.Compare(exceptions_a, exceptions_b,
+                                              attempt_count, FUNCTIONAL,
+                                              comparison_magnitude,
+                                              benchmark_arguments, job_id)
+        logging.debug('BisectDebug: Functional Compare result: %s', comparison)
         if comparison == compare.DIFFERENT:
           return compare.DIFFERENT
         if comparison == compare.UNKNOWN:
@@ -375,13 +390,25 @@ class JobState:
           comparison_magnitude = 1.0
 
         sample_count = (len(all_a_values) + len(all_b_values)) // 2
-        comparison, _, _, _ = compare.Compare(
-            all_a_values,
-            all_b_values,
-            sample_count,
-            PERFORMANCE,
-            comparison_magnitude,
-        )
+        logging.debug('BisectDebug: Comparing values: %s, %s',
+            all_a_values, all_b_values)
+        mean_diff = Mean(all_b_values) - Mean(all_a_values)
+        # Pinpoint jobs that exist prior to this change will not
+        # have an improvement direction. See crbug/1351167#c4
+        if not getattr(self, '_improvement_direction', None):
+          self._improvement_direction = anomaly.UNKNOWN
+        # if improvement, return same
+        if ((mean_diff > 0 and self._improvement_direction == anomaly.UP)
+            or mean_diff < 0 and self._improvement_direction == anomaly.DOWN):
+          logging.debug(
+              'BisectDebug: Improvement found. Improvement direction: %s, mean diff: %s',
+              self._improvement_direction, mean_diff)
+          return compare.SAME
+        comparison, _, _, _ = compare.Compare(all_a_values, all_b_values,
+                                              sample_count, PERFORMANCE,
+                                              comparison_magnitude,
+                                              benchmark_arguments, job_id)
+        logging.debug('BisectDebug: Compare result: %s', comparison)
         if comparison == compare.DIFFERENT:
           return compare.DIFFERENT
         if comparison == compare.UNKNOWN:

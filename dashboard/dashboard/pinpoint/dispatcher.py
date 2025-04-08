@@ -43,6 +43,11 @@ def JobHandlerGet(job_id):
   return handlers.job.JobHandlerGet(job_id)
 
 
+@APP.route('/api/job', methods=['POST'])
+def JobHandlerPost():
+  return handlers.job.JobHandlerPost()
+
+
 @APP.route('/api/queue-stats/<configuration>')
 def QueueStatsHandlerGet(configuration):
   return handlers.queue_stats.QueueStatsHandlerGet(configuration)
@@ -79,6 +84,11 @@ def IsolateCleanupHandler():
   return handlers.isolate.IsolateCleanupHandler()
 
 
+@APP.route('/cron/update-culprit-verification-results')
+def CulpritVerificationResultsUpdateHandler():
+  return handlers.culprit.CulpritVerificationResultsUpdateHandler()
+
+
 @APP.route('/api/results2/<job_id>')
 def Results2Handler(job_id):
   return handlers.results2.Results2Handler(job_id)
@@ -102,6 +112,10 @@ def IsolateHandler():
 @APP.route('/api/stats')
 def StatsHandler():
   return handlers.stats.StatsHandler()
+
+@APP.route('/api/builds/<bot_config>', methods=['GET'])
+def BuildsHander(bot_config):
+  return handlers.builds.RecentBuildsGet(bot_config)
 
 
 @APP.route('/_ah/push-handlers/task-updates', methods=['POST'])

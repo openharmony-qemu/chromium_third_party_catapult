@@ -453,11 +453,14 @@ class BrowserBackend(app_backend.AppBackend):
   def GetSystemInfo(self):
     return None
 
+  def GetVersionInfo(self):
+    return {}
+
   @property
   def supports_memory_dumping(self):
     return False
 
-  def DumpMemory(self, timeout=None, detail_level=None):
+  def DumpMemory(self, timeout=None, detail_level=None, deterministic=False):
     raise NotImplementedError()
 
 # pylint: disable=invalid-name

@@ -39,7 +39,9 @@ from gslib.utils import boto_util
 from gslib.utils import constants
 from gslib.utils import hashing_helper
 from gslib.utils import parallelism_framework_util
-from gslib.utils import text_util
+from gslib.utils.shim_util import GcloudStorageFlag
+from gslib.utils.shim_util import GcloudStorageMap
+from gslib.utils import shim_util
 
 _PutToQueueWithTimeout = parallelism_framework_util.PutToQueueWithTimeout
 
@@ -72,6 +74,17 @@ _DETAILED_HELP_TEXT = ("""
   -m          Calculate a MD5 hash for the specified files.
 """)
 
+_GCLOUD_FORMAT_STRING = (
+    '--format=' + 'value[separator="",terminator=""](' + 'digest_format.sub("' +
+    shim_util.get_format_flag_caret() + '", "Hashes ["),' + 'url.sub("' +
+    shim_util.get_format_flag_caret() + '", "] for ").sub("$", ":^\\^n"),' +
+    'md5_hash.yesno(yes="\tHash (md5):\t\t", no=""),' +
+    'md5_hash.yesno(no=""),' + 'md5_hash.yesno(yes="NEWLINE", no="")' +
+    '.sub("NEWLINE", "' + shim_util.get_format_flag_newline() + '"),' +
+    'crc32c_hash.yesno(yes="\tHash (crc32c):\t\t", no=""),' +
+    'crc32c_hash.yesno(no=""),' + 'crc32c_hash.yesno(yes="NEWLINE", no="")' +
+    '.sub("NEWLINE", "' + shim_util.get_format_flag_newline() + '")' + ')')
+
 
 class HashCommand(Command):
   """Implementation of gsutil hash command."""
@@ -99,6 +112,27 @@ class HashCommand(Command):
       help_text=_DETAILED_HELP_TEXT,
       subcommand_help_text={},
   )
+
+  def get_gcloud_storage_args(self):
+    gcloud_storage_map = GcloudStorageMap(
+        gcloud_command=[
+            'storage',
+            'hash',
+            _GCLOUD_FORMAT_STRING,
+        ],
+        flag_map={
+            '-h': GcloudStorageFlag('--hex'),
+            '-c': None,
+            '-m': None,
+        },
+    )
+    args_set = set(self.args + [flag for flag, _ in self.sub_opts])
+    if '-c' in args_set and '-m' not in args_set:
+      gcloud_storage_map.gcloud_command += ['--skip-md5']
+    elif '-m' in args_set and '-c' not in args_set:
+      gcloud_storage_map.gcloud_command += ['--skip-crc32c']
+
+    return super().get_gcloud_storage_args(gcloud_storage_map)
 
   @classmethod
   def _ParseOpts(cls, sub_opts, logger):
