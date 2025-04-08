@@ -51,6 +51,7 @@ class AlertGroup(ndb.Model):
     triaged = 2
     bisected = 3
     closed = 4
+    sandwiched = 5
 
   status = ndb.IntegerProperty(indexed=False)
 
@@ -58,10 +59,13 @@ class AlertGroup(ndb.Model):
     test_suite = 0
     logical = 1
     reserved = 2
+    test_suite_skia = 3
 
   group_type = ndb.IntegerProperty(
       indexed=False,
-      choices=[Type.test_suite, Type.logical, Type.reserved],
+      choices=[
+          Type.test_suite, Type.logical, Type.reserved, Type.test_suite_skia
+      ],
       default=Type.test_suite,
   )
   active = ndb.BooleanProperty(indexed=True)
@@ -73,6 +77,8 @@ class AlertGroup(ndb.Model):
   # Key of canonical AlertGroup. If not None the group is considered to be
   # duplicate.
   canonical_group = ndb.KeyProperty(indexed=True)
+
+  sandwich_verification_workflow_id = ndb.StringProperty(indexed=True)
 
   def IsOverlapping(self, b):
     return (self.name == b.name and self.domain == b.domain
@@ -87,6 +93,10 @@ class AlertGroup(ndb.Model):
   def GetType(cls, anomaly_entity):
     if anomaly_entity.alert_grouping:
       return cls.Type.logical
+
+    if anomaly_entity.source and anomaly_entity.source == 'skia':
+      return cls.Type.test_suite_skia
+
     return cls.Type.test_suite
 
   @classmethod
@@ -162,6 +172,6 @@ class AlertGroup(ndb.Model):
     return [g for g in query.fetch() if g.group_type == group_type]
 
   @classmethod
-  def GetAll(cls, active=True):
+  def GetAll(cls, active=True, group_type=Type.test_suite):
     groups = cls.query(cls.active == active).fetch()
-    return groups or []
+    return [g for g in groups if g.group_type == group_type] or []

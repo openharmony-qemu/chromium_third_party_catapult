@@ -6,6 +6,7 @@
 
 from __future__ import absolute_import
 import logging
+import time
 
 from telemetry import decorators
 from telemetry.internal.backends.chrome import android_browser_finder
@@ -95,13 +96,21 @@ def FindBrowser(options):
     raise browser_finder_exceptions.BrowserFinderException(
         '--browser-executable requires --browser=exact.')
 
-  if (not _IsCrosBrowser(options)  and
-      options.remote is not None):
+  if (not _IsCrosBrowser(options)
+      and (options.remote is not None or options.fetch_cros_remote)):
     raise browser_finder_exceptions.BrowserFinderException(
         '--remote requires --browser=[la]cros-chrome[-guest].')
 
   SetTargetPlatformsBasedOnBrowserType(options)
-  devices = device_finder.GetDevicesMatchingOptions(options)
+  devices = []
+  for iteration in range(options.initial_find_device_attempts):
+    devices = device_finder.GetDevicesMatchingOptions(options)
+    if devices:
+      break
+    if iteration + 1 < options.initial_find_device_attempts:
+      logging.warning('Did not find any devices while looking for browsers, '
+                      'retrying after waiting a bit.')
+      time.sleep(10)
   browsers = []
   default_browsers = []
 
@@ -145,16 +154,24 @@ def FindBrowser(options):
     types = FindAllBrowserTypes(browser_finders)
     chosen_browser = min(browsers, key=lambda b: types.index(b.browser_type))
   else:
+    # b/355218109 - the naming of out/folder has been modified from
+    # out/Release, out/Debug to be bot specific. However, we reuse build
+    # artifacts in perf, meaning that a Swarming task may have a bot name from
+    # a different builder.
+    # The browser_type is curated by path manipulation to the binary in question
+    # and so switching from out/Release won't match --browser=release for ex.
+    logging.info("Potential browser candidates: %s" % browsers)
+    logging.info("Browser type specified for run: %s" % options.browser_type)
     matching_browsers = [
-        b for b in browsers
-        if b.browser_type == options.browser_type and
-        b.SupportsOptions(options.browser_options)]
+        b for b in browsers if b.browser_type == options.browser_type
+        and b.SupportsOptions(options.browser_options)
+    ]
     if not matching_browsers:
-      logging.warning('Cannot find any matched browser')
+      logging.error('Cannot find any matched browser')
       return None
+    logging.info('Matching browsers: %r' % matching_browsers)
     if len(matching_browsers) > 1:
-      logging.warning('Multiple browsers of the same type found: %r',
-                      matching_browsers)
+      logging.warning('Multiple browsers of the same type found')
     chosen_browser = max(matching_browsers,
                          key=lambda b: b.last_modification_time)
 

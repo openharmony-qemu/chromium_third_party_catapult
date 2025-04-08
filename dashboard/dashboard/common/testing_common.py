@@ -12,7 +12,7 @@ import fnmatch
 import itertools
 import json
 import logging
-import mock
+from unittest import mock
 import os
 import re
 import sys
@@ -31,6 +31,7 @@ from dashboard.common import datastore_hooks
 from dashboard.common import stored_object
 from dashboard.common import utils
 from dashboard.models import graph_data
+from dashboard.services import request as request_service
 
 _QUEUE_YAML_DIR = os.path.join(os.path.dirname(__file__), '..', '..')
 
@@ -40,6 +41,11 @@ INTERNAL_USER = users.User(
     email='internal@example.com', _auth_domain='google.com')
 EXTERNAL_USER = users.User(
     email='external@example.com', _auth_domain='example.com')
+
+
+def CheckSandwichAllowlist(subscription, benchmark, cfg):
+  return not ('blocked' in subscription or 'blocked' in benchmark
+              or 'blocked' in cfg)
 
 
 class FakeRequestObject:
@@ -433,6 +439,10 @@ class FakeIssueTrackerService:
     self._bug_id_counter += 1
     return result
 
+  def NewBugError(self, *args, **kwargs):
+    del args, kwargs
+    return {'error': 'mock error.'}
+
   def AddBugComment(self, *args, **kwargs):
     self.add_comment_args = args
     self.add_comment_kwargs = kwargs
@@ -447,6 +457,24 @@ class FakeIssueTrackerService:
           'state': ('closed'
                     if kwargs.get('status') in {'WontFix', 'Fixed'} else 'open')
       })
+
+    # It was not fun to discover that these lines had to be added before components
+    # passed to perf_issue_service_client.PostIssueComment would show up as side
+    # effects at assertion time in unit tests.
+    if 'components' in kwargs:
+      components = kwargs.get('components')
+      self.issues.setdefault(issue_key, {}).update({
+          'components': components
+      })
+    if 'labels' in kwargs and kwargs.get('labels') is not None:
+      labels = kwargs.get('labels')
+      existing_labels = self.issues.get(issue_key).get('labels')
+      issue_labels = set(labels)
+      if existing_labels is not None:
+        issue_labels = issue_labels | set(existing_labels)
+      self.issues.setdefault(issue_key, {}).update({'labels': issue_labels})
+      if isinstance(labels, list):
+        labels.sort()
     self.calls.append({
         'method': 'AddBugComment',
         'args': args,
@@ -557,8 +585,10 @@ class FakeCASClient:
   @staticmethod
   def _NormalizeDigest(digest):
     return {
-        'hash': digest['hash'],
-        'sizeBytes': digest.get('sizeBytes') or str(digest.get('size_bytes')),
+        'hash':
+            digest['hash'],
+        'sizeBytes':
+            str(digest.get('sizeBytes') or digest.get('size_bytes') or 0),
     }
 
   def GetTree(self, cas_ref, page_size=None, page_token=None):
@@ -566,7 +596,7 @@ class FakeCASClient:
       raise NotImplementedError()
     digest = self._NormalizeDigest(cas_ref['digest'])
     key = (digest['hash'], digest['sizeBytes'])
-    return [{'directories': [self._trees[cas_ref['cas_instance']][key]]}]
+    return [{'directories': [self._trees[cas_ref['casInstance']][key]]}]
 
   def BatchRead(self, cas_instance, digests):
     digests = [self._NormalizeDigest(d) for d in digests]
@@ -584,3 +614,26 @@ class FakeCASClient:
             'status': {},
         } for d in digests]
     }
+
+
+class FakeCloudWorkflows:
+
+  def __init__(self):
+    self.executions = {}
+    self.create_execution_called_with_anomaly = None
+
+  def CreateExecution(self, anomaly):
+    self.create_execution_called_with_anomaly = anomaly
+    new_id = ('execution-id-%s' % len(self.executions))
+    self.executions[new_id] = {
+        'name': new_id,
+        'state': 'ACTIVE',
+        'result': None,
+        'error': None,
+    }
+    return new_id
+
+  def GetExecution(self, execution_id):
+    if execution_id not in self.executions:
+      raise request_service.NotFoundError('HTTP status code 404: NOT FOUND', '', '')
+    return self.executions[execution_id]

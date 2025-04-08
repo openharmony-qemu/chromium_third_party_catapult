@@ -66,7 +66,24 @@ REGULAR_TELEMETRY_TESTS_WITH_FALLBACKS = {}
 for test in SUFFIXED_REGULAR_TELEMETRY_TESTS:
   for suffix in SUFFIXES:
     REGULAR_TELEMETRY_TESTS_WITH_FALLBACKS[test + suffix] = test
+# crbug/1439658:
+# Add fallback from _android_clank_monochrome to _android_clank_chrome.
+# We will use _android_clank_monochrome to replace _android_clank_chrome
+# to reduce build time. The change in chromium will break pinpoint as pinpoint
+# jobs running on the new commits will look for _android_clank_monochrome which
+# pinpoint does not recognize.
+# This will override the value set above, mapping from 'test+suffix' to 'test.
+# The current logic was added two years ago to break performance_test_suite
+# into smaller targets. It should be no longer is use. I added logs in
+# find_isolate.py to catch possible issues.
+_NEW_MONOCHROME_TARGET = 'performance_test_suite_android_clank_monochrome'
+_OLD_CHROME_TARGET = 'performance_test_suite_android_clank_chrome'
+REGULAR_TELEMETRY_TESTS_WITH_FALLBACKS[
+    _NEW_MONOCHROME_TARGET] = _OLD_CHROME_TARGET
 
+_NON_CHROME_TARGETS = ['v8']
+
+_ATTEMPT_COUNT_LIMIT = 150
 
 def _CheckUser():
   if utils.IsDevAppserver():
@@ -96,6 +113,7 @@ def NewHandlerPost():
 
 def _CreateJob(req):
   """Creates a new Pinpoint job from WebOb request arguments."""
+  logging.debug('Received new job request: %s', req)
   original_arguments = utils.RequestParamsMixed(req)
   logging.debug('Received Params: %s', original_arguments)
 
@@ -104,10 +122,17 @@ def _CreateJob(req):
   _ValidateRequiredParams(original_arguments)
 
   arguments = _ArgumentsWithConfiguration(original_arguments)
+  if not arguments.get('target'):
+    arguments['target'] = GetIsolateTarget(
+        arguments.get('configuration', ''), arguments.get('benchmark'))
   logging.debug('Updated Params: %s', arguments)
 
   # Validate arguments and convert them to canonical internal representation.
   quests = _GenerateQuests(arguments)
+
+  # Check target param here
+  if not arguments.get('target'):
+    raise ValueError('Parameter target must not be empty')
 
   # Validate the priority, if it's present.
   priority = _ValidatePriority(arguments.get('priority'))
@@ -158,6 +183,10 @@ def _CreateJob(req):
     initial_attempt_count = int(initial_attempt_count)
   except (TypeError, ValueError):
     initial_attempt_count = None
+
+  if initial_attempt_count and initial_attempt_count > _ATTEMPT_COUNT_LIMIT:
+    raise ValueError('Attempt count cannot be greater than %d.'
+                       % _ATTEMPT_COUNT_LIMIT)
 
   # Create job.
   try:
@@ -439,6 +468,65 @@ def _ValidateComparisonMagnitude(comparison_magnitude):
   return float(comparison_magnitude)
 
 
+def GetIsolateTarget(bot_name, suite):
+  if suite in _NON_CHROME_TARGETS:
+    return ''
+
+  # ChromeVR
+  if suite.startswith('xr.'):
+    return 'vr_perf_tests'
+
+  # WebRTC perf tests
+  if suite == 'webrtc_perf_tests':
+    return 'webrtc_perf_tests'
+
+  # This is a special-case for webview, which we probably don't need to handle
+  # in the Dashboard (instead should just support in Pinpoint through
+  # configuration).
+  if 'webview' in bot_name.lower():
+    return 'performance_webview_test_suite'
+
+  # Special cases for CrOS tests
+  # performance_test_suites are device type specific.
+  if 'eve' in bot_name.lower():
+    return 'performance_test_suite_eve'
+  if bot_name == 'lacros-x86-perf':
+    return 'performance_test_suite_octopus'
+
+  # WebEngine tests are specific to Fuchsia devices only.
+  if 'fuchsia-perf' in bot_name.lower():
+    return 'performance_web_engine_test_suite'
+
+  # Each Android binary has its own target, and different bots use different
+  # binaries. Mapping based off of Chromium's
+  # //tools/perf/core/perf_data_generator.py
+  if bot_name in ['android-go-perf', 'android-go-perf-pgo']:
+    return 'performance_test_suite_android_clank_monochrome'
+  if bot_name == 'android-go-wembley-perf':
+    return 'performance_test_suite_android_clank_trichrome_bundle'
+  if bot_name in ['android-new-pixel-perf', 'android-new-pixel-perf-pgo']:
+    return ('performance_test_suite_android_clank_'
+            'trichrome_chrome_google_64_32_bundle')
+  if bot_name in [
+      'android-new-pixel-pro-perf', 'android-new-pixel-pro-perf-pgo'
+  ]:
+    return ('performance_test_suite_android_clank_'
+            'trichrome_chrome_google_64_32_bundle')
+  if bot_name in ['android-pixel4-perf', 'android-pixel4-perf-pgo']:
+    return 'performance_test_suite_android_clank_trichrome_chrome_google_64_32_bundle'
+  if bot_name in ['android-pixel6-perf', 'android-pixel6-perf-pgo']:
+    return 'performance_test_suite_android_clank_trichrome_chrome_google_64_32_bundle'
+  if bot_name in ['android-pixel6-pro-perf', 'android-pixel6-pro-perf-pgo']:
+    return 'performance_test_suite_android_clank_trichrome_bundle'
+  if bot_name == 'android-pixel-fold-perf':
+    return 'performance_test_suite_android_clank_trichrome_chrome_google_64_32_bundle'
+  if 'android' in bot_name.lower():
+    raise Exception(
+        'Given Android bot %s does not have an isolate mapped to it' % bot_name)
+
+  return 'performance_test_suite'
+
+
 def _GenerateQuests(arguments):
   """Generate a list of Quests from a dict of arguments.
 
@@ -453,6 +541,7 @@ def _GenerateQuests(arguments):
     request arguments that were used, and quests is a list of Quests.
   """
   quests = arguments.get('quests')
+
   if quests:
     if isinstance(quests, six.string_types):
       quests = quests.split(',')
@@ -537,7 +626,7 @@ def _ValidateUser(user):
   return user or utils.GetEmail()
 
 
-_REQUIRED_NON_EMPTY_PARAMS = {'target', 'benchmark'}
+_REQUIRED_NON_EMPTY_PARAMS = {'benchmark'}
 
 
 def _ValidateRequiredParams(params):

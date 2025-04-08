@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 """Common utils for issue tracker client."""
 
+import functools
 import json
 import logging
 import os
@@ -15,6 +16,10 @@ import google_auth_httplib2
 
 TOKEN_INFO_ENDPOINT = 'https://oauth2.googleapis.com/tokeninfo'
 EMAIL_SCOPE = 'https://www.googleapis.com/auth/userinfo.email'
+PROD_SERVICE_ACCOUNT = 'chromeperf@appspot.gserviceaccount.com'
+STAGING_SERVICE_ACCOUNT = 'chromeperf-stage@appspot.gserviceaccount.com'
+# pylint: disable=line-too-long
+PINPOINT_SKIA_SERVICE_ACCOUNT = 'pinpoint-worker@skia-infra-public.iam.gserviceaccount.com'
 
 _STAGING_APP_ID = 'chromeperf-stage'
 
@@ -23,10 +28,16 @@ def IsStagingEnvironment():
   return os.environ.get('GOOGLE_CLOUD_PROJECT') == _STAGING_APP_ID
 
 
+def ServiceAccount():
+  if IsStagingEnvironment():
+    return STAGING_SERVICE_ACCOUNT
+  return PROD_SERVICE_ACCOUNT
+
+
 def AllowList():
   if IsStagingEnvironment():
-    return {'chromeperf-stage@appspot.gserviceaccount.com'}
-  return {'chromeperf@appspot.gserviceaccount.com'}
+    return {STAGING_SERVICE_ACCOUNT}
+  return {PROD_SERVICE_ACCOUNT}
 
 
 def ServiceAccountHttp(scope=EMAIL_SCOPE, timeout=None):
@@ -60,7 +71,7 @@ def AuthorizeBearerToken(request):
 
   # Check that the request includes the `Authorization` header.
   if "Authorization" not in request.headers:
-    logging.warning('Missing "Authorization" header in the request.')
+    logging.warning('[Auth] Missing "Authorization" header in the request.')
     return False
 
   access_token = request.headers["Authorization"].split("Bearer ")[1]
@@ -69,7 +80,7 @@ def AuthorizeBearerToken(request):
 
   if response.status != 200:
     logging.warning(
-      'Invalid response status from token info endpoint: %s. Url: %s',
+      '[Auth] Invalid response status from token info endpoint: %s. Url: %s',
       response, token_info_url)
     return False
 
@@ -78,16 +89,17 @@ def AuthorizeBearerToken(request):
   if email and content_dict.get('email_verified') and email in AllowList():
     return True
 
-  logging.warning('No valid email is found in request token.')
+  logging.warning(
+    '[Auth] No valid email is found in request token. Email: %s. Validation response: %s',
+    email, content_dict)
   return False
 
 
 def BearerTokenAuthorizer(wrapped_handler):
-
+  @functools.wraps(wrapped_handler)
   def Wrapper(*args, **kwargs):
-    if not AuthorizeBearerToken(flask_request):
+    if not IsStagingEnvironment() and not AuthorizeBearerToken(flask_request):
       return make_response('Failed to validate the incoming request.', 403)
     return wrapped_handler(*args, **kwargs)
 
-  Wrapper.__name__ = wrapped_handler.__name__
   return Wrapper

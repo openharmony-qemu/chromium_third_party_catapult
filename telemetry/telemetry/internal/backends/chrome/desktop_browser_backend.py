@@ -9,6 +9,7 @@ import io
 import logging
 import os
 import os.path
+import platform
 import random
 import re
 import shutil
@@ -37,7 +38,7 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
   """
   def __init__(self, desktop_platform_backend, browser_options,
                browser_directory, profile_directory,
-               executable, flash_path, is_content_shell,
+               executable, is_content_shell,
                build_dir=None):
     super().__init__(
         desktop_platform_backend,
@@ -48,7 +49,6 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
         supports_tab_control=not is_content_shell,
         build_dir=build_dir)
     self._executable = executable
-    self._flash_path = flash_path
     self._is_content_shell = is_content_shell
 
     # Initialize fields so that an explosion during init doesn't break in Close.
@@ -60,9 +60,6 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
 
     if not self._executable:
       raise Exception('Cannot create browser, no executable found!')
-
-    if self._flash_path and not os.path.exists(self._flash_path):
-      raise RuntimeError('Flash path does not exist: %s' % self._flash_path)
 
     if self.is_logging_enabled:
       self._log_file_path = os.path.join(tempfile.mkdtemp(), 'chrome.log')
@@ -168,6 +165,16 @@ class DesktopBrowserBackend(chrome_browser_backend.ChromeBrowserBackend):
 
     cmd = [self._executable]
     if self.browser.platform.GetOSName() == 'mac':
+      if int(os.environ.get('START_BROWSER_WITH_DEFAULT_PRIORITY', '0')):
+        # Start chrome on mac using `open`, when running benchmarks
+        # so that it starts with default priority. See crbug/1454294
+        executable_path = self._executable
+        macos_version =  platform.mac_ver()[0]
+        macos_major_version = int(macos_version[:macos_version.find('.')])
+        # `open` seem to require absolute paths for mac version 13+
+        if macos_major_version>= 13:
+          executable_path = os.path.abspath(self._executable)
+        cmd = ['open', '-n', '-W', '-a', executable_path, '--args']
       cmd.append('--use-mock-keychain')  # crbug.com/865247
     cmd.extend(startup_args)
     cmd.append('about:blank')

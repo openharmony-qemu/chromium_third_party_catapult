@@ -83,7 +83,7 @@ def GetTestResultFromPostedJson(json_string):
 
 def CreateExpectedTestResult(
         test_id=None, status=None, expected=None, duration=None,
-        summary_html=None, artifacts=None, tags=None, test_metadata=None,
+        summary_html=HTML_SUMMARY, artifacts=None, tags=None, test_metadata=None,
         primary_error_message=None):
     test_id = test_id or 'test_name_prefix.test_name'
     result = {
@@ -91,7 +91,7 @@ def CreateExpectedTestResult(
         'status': status or json_results.ResultType.Pass,
         'expected': expected if expected is not None else True,
         'duration': duration or '1.000000000s',
-        'summaryHtml': summary_html or HTML_SUMMARY,
+        'summaryHtml': summary_html,
         'artifacts': artifacts or STDOUT_STDERR_ARTIFACTS,
         'tags': tags or [
             {'key': 'test_name', 'value': test_id.split('.')[-1]},
@@ -264,6 +264,87 @@ class ResultSinkReporterTest(unittest.TestCase):
                 x) for x in self._host.files[output_filepath].rstrip(
                 '\n').split('\n')]
         self.assertEqual(got_results, [expected_result, expected_result])
+
+    def testBatchResults(self):
+        self.setLuciContextWithContent(DEFAULT_LUCI_CONTEXT)
+        rsr = ResultSinkReporterWithFakeSrc(self._host)
+        rsr._post = StubWithRetval(0)
+        with rsr.batch_results():
+            result1 = CreateResult({
+                'name': 'test_name',
+                'actual': json_results.ResultType.Timeout,
+            })
+            status1 = rsr.report_individual_test_result(
+                result1, ARTIFACT_DIR, CreateTestExpectations(), FAKE_TEST_PATH,
+                FAKE_TEST_LINE, 'test_name_prefix.')
+            self.assertEqual(status1, 0)
+
+            result2 = CreateResult({
+                'name': 'test_name',
+                'actual': json_results.ResultType.Failure,
+            })
+            status2 = rsr.report_individual_test_result(
+                result2, ARTIFACT_DIR, CreateTestExpectations(), FAKE_TEST_PATH,
+                FAKE_TEST_LINE, 'test_name_prefix.')
+            self.assertEqual(status2, 0)
+
+        results = json.loads(rsr._post.args[1])['testResults']
+        self.assertEqual(results, [
+            CreateExpectedTestResult(status='ABORT', expected=False),
+            CreateExpectedTestResult(status='FAIL', expected=False),
+        ])
+
+    def testBatchResultsFailure(self):
+        self.setLuciContextWithContent(DEFAULT_LUCI_CONTEXT)
+        rsr = ResultSinkReporterWithFakeSrc(self._host)
+        rsr._post = StubWithRetval(2)
+        with self.assertRaisesRegex(result_sink.ResultSinkError,
+                                    'failed to upload batch results '
+                                    '\(status: 2\)'):
+            with rsr.batch_results():
+                result = CreateResult({
+                    'name': 'test_name',
+                    'actual': json_results.ResultType.Timeout,
+                })
+                status = rsr.report_individual_test_result(
+                    result, ARTIFACT_DIR, CreateTestExpectations(),
+                    FAKE_TEST_PATH, FAKE_TEST_LINE, 'test_name_prefix.')
+                self.assertEqual(status, 0)
+
+    def testBatchResultsCancel(self):
+        self.setLuciContextWithContent(DEFAULT_LUCI_CONTEXT)
+        rsr = ResultSinkReporterWithFakeSrc(self._host)
+        rsr._post = StubWithRetval(0)
+        with self.assertRaises(RuntimeError):
+            with rsr.batch_results():
+                result = CreateResult({
+                    'name': 'test_name',
+                    'actual': json_results.ResultType.Timeout,
+                })
+                status = rsr.report_individual_test_result(
+                    result, ARTIFACT_DIR, CreateTestExpectations(),
+                    FAKE_TEST_PATH, FAKE_TEST_LINE, 'test_name_prefix.')
+                self.assertEqual(status, 0)
+                raise RuntimeError('should propagate past `batch_results()`')
+        self.assertIsNone(rsr._post.args)
+
+    def testBatchResultsNoResults(self):
+        self.setLuciContextWithContent(DEFAULT_LUCI_CONTEXT)
+        rsr = ResultSinkReporterWithFakeSrc(self._host)
+        rsr._post = StubWithRetval(0)
+        with rsr.batch_results():
+            pass
+        self.assertIsNone(rsr._post.args)
+
+    def testBatchResultsCannotNest(self):
+        self.setLuciContextWithContent(DEFAULT_LUCI_CONTEXT)
+        rsr = ResultSinkReporterWithFakeSrc(self._host)
+        rsr._post = StubWithRetval(0)
+        with rsr.batch_results():
+            with self.assertRaisesRegex(result_sink.ResultSinkError,
+                                        '`batch_results\(\)` cannot be nested'):
+                with rsr.batch_results():
+                    pass
 
     def testReportIndividualTestResultFailureReason(self):
         self.setLuciContextWithContent(DEFAULT_LUCI_CONTEXT)
@@ -487,6 +568,76 @@ class ResultSinkReporterTest(unittest.TestCase):
                 summary_html=expected_html_summary)
         self.assertEqual(test_result, expected_result)
 
+    def testResultIndividualTestResultNoStdout(self):
+        self.setLuciContextWithContent(DEFAULT_LUCI_CONTEXT)
+        rsr = ResultSinkReporterWithFakeSrc(self._host)
+        rsr._post = StubWithRetval(2)
+        results = CreateResult({
+            'name': 'test_name',
+            'actual': json_results.ResultType.Pass,
+            'artifacts': {},
+            'out': '',
+        })
+        retval = rsr.report_individual_test_result(
+                results, ARTIFACT_DIR, CreateTestExpectations(), FAKE_TEST_PATH,
+                FAKE_TEST_LINE, 'test_name_prefix.')
+        self.assertEqual(retval, 2)
+
+        test_result = GetTestResultFromPostedJson(rsr._post.args[1])
+        expected_result = CreateExpectedTestResult(
+            summary_html='<p><text-artifact artifact-id="typ_stderr"/></p>')
+        expected_result['artifacts'] = {
+            'typ_stderr': STDOUT_STDERR_ARTIFACTS['typ_stderr'],
+        }
+        self.assertEqual(test_result, expected_result)
+
+    def testReportIndividualTestResultNoStdoutOrStderr(self):
+        self.setLuciContextWithContent(DEFAULT_LUCI_CONTEXT)
+        rsr = ResultSinkReporterWithFakeSrc(self._host)
+        rsr._post = StubWithRetval(2)
+        results = CreateResult({
+            'name': 'test_name',
+            'actual': json_results.ResultType.Pass,
+            'artifacts': {},
+            'out': '',
+            'err': '',
+        })
+        retval = rsr.report_individual_test_result(
+                results, ARTIFACT_DIR, CreateTestExpectations(), FAKE_TEST_PATH,
+                FAKE_TEST_LINE, 'test_name_prefix.')
+        self.assertEqual(retval, 2)
+
+        test_result = GetTestResultFromPostedJson(rsr._post.args[1])
+        expected_result = CreateExpectedTestResult(summary_html='')
+        expected_result['artifacts'] = {}
+        self.assertEqual(test_result, expected_result)
+
+    def testReportIndividualTestResultCustomSummary(self):
+        self.setLuciContextWithContent(DEFAULT_LUCI_CONTEXT)
+        rsr = ResultSinkReporterWithFakeSrc(self._host)
+        rsr._post = StubWithRetval(2)
+        results = CreateResult({
+            'name': 'test_name',
+            'actual': json_results.ResultType.Pass,
+            'artifacts': {
+                'artifact_name': ['https://somelink.com'],
+            }
+        })
+        html_summary = '<h3>Overrides the default summary</h3>'
+        retval = rsr.report_individual_test_result(
+                results, ARTIFACT_DIR, CreateTestExpectations(), FAKE_TEST_PATH,
+                FAKE_TEST_LINE, 'test_name_prefix.',
+                html_summary=html_summary)
+        self.assertEqual(retval, 2)
+
+        test_result = GetTestResultFromPostedJson(rsr._post.args[1])
+        expected_artifacts = {}
+        expected_artifacts.update(STDOUT_STDERR_ARTIFACTS)
+        expected_result = CreateExpectedTestResult(
+                artifacts=expected_artifacts,
+                summary_html=html_summary)
+        self.assertEqual(test_result, expected_result)
+
     def testReportIndividualTestResultLongTestName(self):
         self.setLuciContextWithContent(DEFAULT_LUCI_CONTEXT)
         rsr = ResultSinkReporterWithFakeSrc(self._host)
@@ -537,10 +688,17 @@ class ResultSinkReporterTest(unittest.TestCase):
     def testReportResultEarlyReturnIfNotSupported(self):
         self.setLuciContextWithContent({})
         rsr = result_sink.ResultSinkReporter(self._host)
+        # We need to keep a reference to this and restore it later when we're
+        # done testing, otherwise subsequent tests can end up failing due to
+        # trying to use the monkey patched function.
+        original_function = result_sink._create_json_test_result
         result_sink._create_json_test_result = lambda: 1/0
-        self.assertEqual(rsr._report_result(
-                'test_id', json_results.ResultType.Pass, True, {}, {},
-                '<pre>summary</pre>', 1, {}, None), 0, {})
+        try:
+            self.assertEqual(rsr._report_result(
+                    'test_id', json_results.ResultType.Pass, True, {}, {},
+                    '<pre>summary</pre>', 1, {}, None), 0, {})
+        finally:
+            result_sink._create_json_test_result = original_function
 
     def testCreateJsonTestResultInvalidStatus(self):
         with self.assertRaises(ValueError):

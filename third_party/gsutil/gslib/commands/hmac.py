@@ -32,7 +32,10 @@ from gslib.help_provider import CreateHelpText
 from gslib.metrics import LogCommandParams
 from gslib.project_id import PopulateProjectId
 from gslib.utils.cloud_api_helper import GetCloudApiInstance
+from gslib.utils.shim_util import GcloudStorageFlag
+from gslib.utils.shim_util import GcloudStorageMap
 from gslib.utils.text_util import InsistAscii
+from gslib.utils import shim_util
 
 _CREATE_SYNOPSIS = """
   gsutil hmac create [-p <project>] <service_account_email>
@@ -129,7 +132,7 @@ _UPDATE_DESCRIPTION = """
 
     gsutil hmac update -s INACTIVE -e M42da= GOOG56JBMFZX6PMPTQ62VD2
 
-  Valid state arguments are ``ACTIVE`` and ``INACTIVE``. To set a key to state 
+  Valid state arguments are ``ACTIVE`` and ``INACTIVE``. To set a key to state
   ``DELETED``, use the ``hmac delete`` command on an ``INACTIVE`` key. If an etag
   is set in the command, it will only succeed if the provided etag matches the etag
   of the stored key.
@@ -206,6 +209,75 @@ def _KeyMetadataOutput(metadata):
   return message
 
 
+_CREATE_COMMAND_FORMAT = ('--format=value[separator="' +
+                          shim_util.get_format_flag_newline() + '"](' +
+                          'format("Access ID:   {}", metadata.accessId),' +
+                          'format("Secret:      {}", secret))')
+_DESCRIBE_COMMAND_FORMAT = (
+    '--format=value[separator="' + shim_util.get_format_flag_newline() +
+    '"](format("Access ID {}:", accessId),' +
+    'format("\tState:                 {}", state),' +
+    'format("\tService Account:       {}", serviceAccountEmail),' +
+    'format("\tProject:               {}", projectId),' +
+    'format("\tTime Created:          {}",' +
+    ' timeCreated.date(format="%a %d %b %Y %H:%M:%S GMT")),' +
+    'format("\tTime Last Updated:     {}",' +
+    ' updated.date(format="%a %d %b %Y %H:%M:%S GMT")),' +
+    'format("\tEtag:                  {}", etag))')
+
+_LIST_COMMAND_SHORT_FORMAT = (
+    '--format=table[no-heading](format("{} ", accessId),'
+    'state:width=11, serviceAccountEmail)')
+
+_PROJECT_FLAG = GcloudStorageFlag('--project')
+
+CREATE_COMMAND = GcloudStorageMap(
+    gcloud_command=['storage', 'hmac', 'create', _CREATE_COMMAND_FORMAT],
+    flag_map={
+        '-p': _PROJECT_FLAG,
+    })
+
+DELETE_COMMAND = GcloudStorageMap(gcloud_command=['storage', 'hmac', 'delete'],
+                                  flag_map={
+                                      '-p': _PROJECT_FLAG,
+                                  })
+
+GET_COMMAND = GcloudStorageMap(
+    gcloud_command=['storage', 'hmac', 'describe', _DESCRIBE_COMMAND_FORMAT],
+    flag_map={'-p': _PROJECT_FLAG})
+
+LIST_COMMAND = GcloudStorageMap(
+    gcloud_command=['storage', 'hmac', 'list', _LIST_COMMAND_SHORT_FORMAT],
+    flag_map={
+        '-a': GcloudStorageFlag('--all'),
+        '-u': GcloudStorageFlag('--service-account'),
+        '-p': _PROJECT_FLAG
+    })
+
+LIST_COMMAND_LONG_FORMAT = GcloudStorageMap(
+    gcloud_command=['storage', 'hmac', 'list', _DESCRIBE_COMMAND_FORMAT],
+    flag_map={
+        '-a': GcloudStorageFlag('--all'),
+        '-l': GcloudStorageFlag('--long'),
+        '-u': GcloudStorageFlag('--service-account'),
+        '-p': _PROJECT_FLAG
+    })
+
+UPDATE_COMMAND = GcloudStorageMap(
+    gcloud_command=['storage', 'hmac', 'update', _DESCRIBE_COMMAND_FORMAT],
+    flag_map={
+        '-s':
+            GcloudStorageFlag({
+                'ACTIVE': '--activate',
+                'INACTIVE': '--deactivate',
+            }),
+        '-e':
+            GcloudStorageFlag('--etag'),
+        '-p':
+            _PROJECT_FLAG
+    })
+
+
 class HmacCommand(Command):
   """Implementation of gsutil hmac command."""
   command_spec = Command.CreateCommandSpec(
@@ -240,6 +312,26 @@ class HmacCommand(Command):
           'list': _list_help_text,
           'update': _update_help_text,
       })
+
+  def get_gcloud_storage_args(self):
+    if self.args[0] == 'list' and '-l' in self.args:
+      gcloud_storage_map = GcloudStorageMap(
+          gcloud_command={'list': LIST_COMMAND_LONG_FORMAT},
+          flag_map={},
+      )
+    else:
+      gcloud_storage_map = GcloudStorageMap(
+          gcloud_command={
+              'create': CREATE_COMMAND,
+              'delete': DELETE_COMMAND,
+              'update': UPDATE_COMMAND,
+              'get': GET_COMMAND,
+              'list': LIST_COMMAND
+          },
+          flag_map={},
+      )
+
+    return super().get_gcloud_storage_args(gcloud_storage_map)
 
   def _CreateHmacKey(self, thread_state=None):
     """Creates HMAC key for a service account."""

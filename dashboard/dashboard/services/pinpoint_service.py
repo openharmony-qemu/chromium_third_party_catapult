@@ -14,12 +14,15 @@ from dashboard.common import utils
 from dashboard.services import request
 
 _PINPOINT_URL = 'https://pinpoint-dot-chromeperf.appspot.com'
-
+_PINPOINT_SKIA_URL = 'https://perf.luci.app'
 
 def NewJob(params):
   """Submits a new job request to Pinpoint."""
   return _Request(_PINPOINT_URL + '/api/new', params)
 
+def NewJobInSkia(params):
+  """Submits a new job request to Pinpoint in Skia."""
+  return _Request(_PINPOINT_SKIA_URL + '/pinpoint/v1/culprit-finder', params)
 
 def _Request(endpoint, params):
   """Sends a request to an endpoint and returns JSON data."""
@@ -42,6 +45,31 @@ def _Request(endpoint, params):
 class CommitRange(collections.namedtuple('CommitRange', ['start', 'end'])):
   __slots__ = ()
 
+
+def UpdateSkiaCulpritFinderRequest(pinpoint_params, alert, bug_id, agg_method):
+  """Update a Pinpoint culprit finder request for the Skia backend.
+
+  Culprit finder is also known as sandwich verification.
+  Pinpoint is being migrated from catapult repo to skia repo.
+  The Skia backend accepts slightly different inputs. The Skia backend
+  accepts the improvement direction.
+
+  Args:
+    pinpoint_params: the bisection request used in catapult
+    alert: the candidate regression
+    bug_id: the bugID
+    agg_method: the method used to aggregate the benchmark runs
+        i.e. avg, mean, std, count, median. Also known as statistic.
+
+  Returns:
+    Pinpoint request to start a new skia culprit finder job
+  """
+  mag = alert.median_after_anomaly - alert.median_before_anomaly
+  pinpoint_params['comparison_magnitude'] = mag
+  pinpoint_params['bug_id'] = bug_id
+  pinpoint_params['aggregation_method'] = agg_method
+
+  return pinpoint_params
 
 def MakeBisectionRequest(test,
                          commit_range,
@@ -97,6 +125,7 @@ def MakeBisectionRequest(test,
       'target': target,
       'priority': priority,
       'tags': json.dumps(tags or {}),
+      'initial_attempt_count': 20,
   }
 
   pinpoint_params.update({

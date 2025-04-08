@@ -10,7 +10,7 @@ import base64
 from flask import Flask
 import itertools
 import json
-import mock
+from unittest import mock
 import random
 import six
 import string
@@ -236,6 +236,8 @@ class AddHistogramsBaseTest(testing_common.TestCase):
                    mock.MagicMock(return_value=None))
 @mock.patch.object(SheriffConfigClient, 'Match',
                    mock.MagicMock(return_value=([], None)))
+@mock.patch('dashboard.services.skia_bridge_service.SkiaServiceClient',
+            mock.MagicMock())
 class AddHistogramsEndToEndTest(AddHistogramsBaseTest):
 
   @mock.patch.object(add_histograms_queue.graph_revisions,
@@ -1628,6 +1630,8 @@ class AddHistogramsTest(AddHistogramsBaseTest):
                    mock.MagicMock(return_value=None))
 @mock.patch.object(SheriffConfigClient, 'Match',
                    mock.MagicMock(return_value=([], None)))
+@mock.patch('dashboard.services.skia_bridge_service.SkiaServiceClient',
+            mock.MagicMock())
 class AddHistogramsUploadCompleteonTokenTest(AddHistogramsBaseTest):
 
   def setUp(self):

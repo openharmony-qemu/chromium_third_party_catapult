@@ -1,6 +1,7 @@
 # Copyright 2020 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+# pylint: disable=too-many-lines
 """The workflow to manipulate an AlertGroup.
 
 We want to separate the workflow from data model. So workflow
@@ -17,6 +18,8 @@ A typical workflow includes these steps:
 But it provides the ability to mock any input and any service, which makes
 testing easier and we can have a more predictable behaviour.
 """
+# pylint: disable=too-many-lines
+
 from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
@@ -25,25 +28,33 @@ import collections
 import datetime
 import itertools
 import jinja2
+import json
 import logging
 import os
 import six
 
+from google.appengine.api import datastore_errors
 from google.appengine.ext import ndb
 
 from dashboard import pinpoint_request
 from dashboard import sheriff_config_client
 from dashboard import revision_info_client
 from dashboard.common import cloud_metric
+from dashboard.common import feature_flags
 from dashboard.common import file_bug
+from dashboard.common import sandwich_allowlist
 from dashboard.common import utils
 from dashboard.models import alert_group
 from dashboard.models import anomaly
+from dashboard.models import graph_data
+from dashboard.models import skia_helper
 from dashboard.models import subscription
 from dashboard.services import crrev_service
 from dashboard.services import gitiles_service
 from dashboard.services import perf_issue_service_client
 from dashboard.services import pinpoint_service
+from dashboard.services import request
+from dashboard.services import workflow_service
 
 # Templates used for rendering issue contents
 _TEMPLATE_LOADER = jinja2.FileSystemLoader(
@@ -51,12 +62,14 @@ _TEMPLATE_LOADER = jinja2.FileSystemLoader(
 _TEMPLATE_ENV = jinja2.Environment(loader=_TEMPLATE_LOADER)
 _TEMPLATE_ISSUE_TITLE = jinja2.Template(
     '[{{ group.subscription_name }}]: '
-    '{{ regressions|length }} regressions in {{ group.name }}')
+    '[{{ regressions|length }}] regressions in {{ group.name }}')
 _TEMPLATE_ISSUE_CONTENT = _TEMPLATE_ENV.get_template(
     'alert_groups_bug_description.j2')
 _TEMPLATE_ISSUE_COMMENT = _TEMPLATE_ENV.get_template(
     'alert_groups_bug_comment.j2')
 _TEMPLATE_REOPEN_COMMENT = _TEMPLATE_ENV.get_template('reopen_issue_comment.j2')
+_TEMPLATE_AUTO_REGRESSION_VERIFICATION_COMMENT = _TEMPLATE_ENV.get_template(
+    'auto_regression_verification_comment.j2')
 _TEMPLATE_AUTO_BISECT_COMMENT = _TEMPLATE_ENV.get_template(
     'auto_bisect_comment.j2')
 _TEMPLATE_GROUP_WAS_MERGED = _TEMPLATE_ENV.get_template(
@@ -83,6 +96,10 @@ _ALERT_GROUP_TRIAGE_DELAY = datetime.timedelta(minutes=20)
 
 # The score is based on overall 60% reproduction rate of pinpoint bisection.
 _ALERT_GROUP_DEFAULT_SIGNAL_QUALITY_SCORE = 0.6
+
+# Emoji to set sandwich-related issue comments apart from other comments
+# visually.
+_SANDWICH = u'\U0001f96a'
 
 
 class SignalQualityScore(ndb.Model):
@@ -132,6 +149,7 @@ class AlertGroupWorkflow:
       config=None,
       sheriff_config=None,
       pinpoint=None,
+      cloud_workflows=None,
       crrev=None,
       gitiles=None,
       revision_info=None,
@@ -145,6 +163,7 @@ class AlertGroupWorkflow:
     self._sheriff_config = (
         sheriff_config or sheriff_config_client.GetSheriffConfigClient())
     self._pinpoint = pinpoint or pinpoint_service
+    self._cloud_workflows = cloud_workflows or workflow_service
     self._crrev = crrev or crrev_service
     self._gitiles = gitiles or gitiles_service
     self._revision_info = revision_info or revision_info_client
@@ -171,10 +190,12 @@ class AlertGroupWorkflow:
     logging.info('Found canonical issue for the groups\' issue: %d',
                  merged_into)
 
+    merged_issue_project = issue.get('mergedInto',
+                                     {}).get('projectId',
+                                             self._group.bug.project)
     query = alert_group.AlertGroup.query(
         alert_group.AlertGroup.active == True,
-        alert_group.AlertGroup.bug.project == issue.get('mergedInto', {}).get(
-            'projectId', self._group.bug.project),
+        alert_group.AlertGroup.bug.project == merged_issue_project,
         alert_group.AlertGroup.bug.bug_id == merged_into)
     query_result = query.fetch(limit=1)
     if not query_result:
@@ -194,8 +215,36 @@ class AlertGroupWorkflow:
         return None
       canonical_group = next_group_key.get()
 
-    logging.info('Found canonical group: %s', canonical_group.key.string_id())
-    return canonical_group
+    # Parity check for canonical group
+    try:
+      canonical_group_new = perf_issue_service_client.GetCanonicalGroupByIssue(
+          self._group.key.string_id(), merged_into, merged_issue_project)
+      canonical_group_key = canonical_group_new.get('key')
+      original_canonical_key = canonical_group.key.string_id()
+      if original_canonical_key != canonical_group_key:
+        logging.warning('Imparity found for GetCanonicalGroupByIssue. %s, %s',
+                        original_canonical_key, canonical_group_key)
+        cloud_metric.PublishPerfIssueServiceGroupingImpariry(
+            'GetCanonicalGroupByIssue')
+      logging.info('Found canonical group: %s', canonical_group_key)
+      canonical_group = ndb.Key('AlertGroup', canonical_group_key).get()
+
+      return canonical_group
+    except Exception as e:  # pylint: disable=broad-except
+      logging.warning('Parity logic failed in GetCanonicalGroupByIssue. %s',
+                      str(e))
+
+
+  def _FindDuplicateGroupKeys(self):
+    try:
+      group_keys = perf_issue_service_client.GetDuplicateGroupKeys(
+          self._group.key.string_id())
+      return group_keys
+    except (ValueError, datastore_errors.BadValueError):
+      # only 'ungrouped' has integer key, which we should not find duplicate.
+      logging.debug('[GroupingDebug] Failed to get duplicate groups. %s',
+                    self._group.key)
+      return []
 
   def _FindDuplicateGroups(self):
     query = alert_group.AlertGroup.query(
@@ -216,13 +265,36 @@ class AlertGroupWorkflow:
       Monorail API issue json and canonical AlertGroup if any.
     """
     duplicate_groups = self._FindDuplicateGroups()
+    duplicate_group_keys = []
+    # Parity check for duplicated groups
+    try:
+      duplicate_group_keys = self._FindDuplicateGroupKeys()
+      original_keys = [g.key.string_id() for g in duplicate_groups]
+      if sorted(duplicate_group_keys) != sorted(original_keys):
+        logging.warning('Imparity found for _FindDuplicateGroups. %s, %s',
+                        duplicate_group_keys, original_keys)
+        cloud_metric.PublishPerfIssueServiceGroupingImpariry(
+            '_FindDuplicateGroups')
+    except Exception as e:  # pylint: disable=broad-except
+      logging.warning('Parity logic failed in _FindDuplicateGroups(%s). %s.',
+                      self._group.key, str(e))
+
+    duplicate_groups = [
+        ndb.Key('AlertGroup', k).get() for k in duplicate_group_keys
+    ]
     anomalies = self._FindRelatedAnomalies([self._group] + duplicate_groups)
+    logging.debug(
+        '[GroupingDebug] Anomalies %s found for group %s and duplicates %s',
+        anomalies, self._group.key, duplicate_group_keys)
+
     now = datetime.datetime.utcnow()
     issue = None
     canonical_group = None
+    log_template = 'Group status: %s. ID: %s'
+    logging.debug(log_template, self._group.status, self._group.key)
     if self._group.status in {
         self._group.Status.triaged, self._group.Status.bisected,
-        self._group.Status.closed
+        self._group.Status.closed, self._group.Status.sandwiched
     }:
       project_name = self._group.bug.project or 'chromium'
       issue = perf_issue_service_client.GetIssue(
@@ -231,6 +303,7 @@ class AlertGroupWorkflow:
         issue['comments'] = perf_issue_service_client.GetIssueComments(
             self._group.bug.bug_id, project_name=project_name)
         canonical_group = self._FindCanonicalGroup(issue)
+        logging.debug('Update.issue: %s', issue)
     return self.GroupUpdate(now, anomalies, issue, canonical_group)
 
   def Process(self, update=None):
@@ -257,7 +330,9 @@ class AlertGroupWorkflow:
     # anomalies list.
     if (not update.anomalies and self._group.anomalies
         and self._group.group_type != alert_group.AlertGroup.Type.reserved):
-      logging.error('No anomalies detected. Skipping this run.')
+      logging.error(
+          'No anomalies detected. Skipping this run for %s. with anomalies %s ',
+          self._group.key, self._group.anomalies)
       return self._group.key
 
     # Process input before we start processing the group.
@@ -315,6 +390,7 @@ class AlertGroupWorkflow:
         # monorail if some operations keep failing.
         return self._CommitGroup()
 
+    regressions, _ = self._GetRegressions(update.anomalies)
     group = self._group
     if group.updated + self._config.active_window <= update.now:
       self._Archive()
@@ -324,16 +400,27 @@ class AlertGroupWorkflow:
                    group.created, self._config.triage_delay, update.now,
                    group.status)
       self._TryTriage(update.now, update.anomalies)
-    elif group.status in {group.Status.triaged}:
+    elif len(self._CheckSandwichAllowlist(regressions)) > 0 and (
+        group.status == group.Status.triaged):
+      logging.info('attempting sandwich verification for AlertGroup: %s',
+                   self._group.key.string_id())
+      sandwiched = self._TryVerifyRegression(update)
+      if not sandwiched and not any(a.auto_bisect_enable
+                                    for a in update.anomalies):
+        self._UpdateIssue(update.issue, update.anomalies, added)
+    elif group.status in {group.Status.sandwiched, group.Status.triaged}:
       self._TryBisect(update)
     return self._CommitGroup()
 
   def _CommitGroup(self):
+    logging.debug('[GroupDebug] Group %s commited.', self._group.key)
     return self._group.put()
 
   def _UpdateAnomalies(self, anomalies):
     added = [a for a in anomalies if a.key not in self._group.anomalies]
     self._group.anomalies = [a.key for a in anomalies]
+    logging.debug('[GroupingDebug] Group %s is associated with anomalies %s.',
+                  self._group.key, self._group.anomalies)
     return added
 
   def _UpdateStatus(self, issue):
@@ -432,7 +519,8 @@ class AlertGroupWorkflow:
     perf_issue_service_client.PostIssueComment(
         self._group.bug.bug_id,
         self._group.project_id,
-        comment='All regressions for this issue have been marked recovered; closing.',
+        comment=('All regressions for this issue have been marked '
+                 'recovered; closing.'),
         status='WontFix',
         labels='Chromeperf-Auto-Closed',
         send_email=False,
@@ -441,7 +529,13 @@ class AlertGroupWorkflow:
   def _ReopenWithNewRegressions(self, all_regressions, added, subscriptions):
     summary = _TEMPLATE_ISSUE_TITLE.render(
         self._GetTemplateArgs(all_regressions))
-    comment = _TEMPLATE_REOPEN_COMMENT.render(self._GetTemplateArgs(added))
+
+    template_args = self._GetTemplateArgs(added)
+
+    skia_args = self._GetSkiaTemplateArgs(added)
+    template_args.update(skia_args)
+
+    comment = _TEMPLATE_REOPEN_COMMENT.render(template_args)
     components, cc, _ = self._ComputeBugUpdate(subscriptions, added)
     perf_issue_service_client.PostIssueComment(
         self._group.bug.bug_id,
@@ -455,6 +549,104 @@ class AlertGroupWorkflow:
         send_email=False,
     )
 
+  def _UpdateRegressionVerification(self, execution, regression, update):
+    '''Update regression verification results in monorail.
+
+    Args:
+      execution - the response from workflow_client.GetExecution()
+      regression - the candidate regression that was sent for verification
+      update - the alert group workflow update being processed
+    Returns:
+      True if the workflow completed with status of SUCCESS and
+        was able to reproduce the anomaly.
+      True if the worfklow completed with status of FAILED or CANCELLED.
+      False for any other condtion.
+    '''
+    status = 'Unconfirmed'
+    components = []
+    proceed_with_bisect = False
+    if execution['state'] == workflow_service.EXECUTION_STATE_ACTIVE:
+      return proceed_with_bisect
+    if execution['state']  == workflow_service.EXECUTION_STATE_SUCCEEDED:
+      results_dict = json.loads(execution['result'])
+      if 'decision' in results_dict:
+        decision = results_dict['decision']
+      else:
+        raise ValueError('execution %s result is missing parameters: %s' %
+                         (execution['name'], results_dict))
+      logging.info(
+          'Regression verification %s for project: %s and '
+          'bug: %s succeeded with repro decision %s.', execution['name'],
+          self._group.project_id, self._group.bug.bug_id, decision)
+      if decision:
+        comment = ('%s Regression verification %s job %s for test: %s\n'
+                   'reproduced the regression with statistic: %s.\n'
+                   'Proceed to bisection.' %
+                   (_SANDWICH, execution['name'], results_dict['job_id'],
+                    utils.TestPath(regression.test), results_dict['statistic']))
+        label = ['Regression-Verification-Repro']
+        status = 'Untriaged'
+        proceed_with_bisect = True
+        if (update.issue
+            and utils.DELAY_REPORTING_LABEL in update.issue.get('labels')):
+          # components will be added when culprit found in bisect.
+          components = []
+        else:
+          components = list(
+              self._GetComponentsFromSubscriptions(regression.subscriptions)
+              # Intentionally ignoring _GetComponentsFromRegressions in this
+              # case for sandwiched regressions. See
+              # https://bugs.chromium.org/p/chromium/issues/detail?id=1459035
+          )
+      else:
+        comment = ('%s Regression verification %s job %s for test: %s\n'
+                   'did NOT reproduce the regression with statistic: %s.\n'
+                   'Issue closed.' %
+                   (_SANDWICH, execution['name'], results_dict['job_id'],
+                    utils.TestPath(regression.test), results_dict['statistic']))
+        label = ['Regression-Verification-No-Repro', 'Chromeperf-Auto-Closed']
+        status = 'WontFix'
+        self._group.updated = update.now
+        self._group.status = self._group.Status.closed
+        self._CommitGroup()
+    elif execution['state'] == workflow_service.EXECUTION_STATE_FAILED:
+      logging.error(
+          'Regression verification %s for project: %s and '
+          'bug: %s failed with error %s.', execution['name'],
+          self._group.project_id, self._group.bug.bug_id, execution['error'])
+      comment = (
+          '%s Regression verification %s for test: %s\n'
+          'failed. Do not proceed to bisection.' %
+          (_SANDWICH, execution['name'], utils.TestPath(regression.test)))
+      label = ['Regression-Verification-Failed', 'Chromeperf-Auto-Closed']
+      status = 'WontFix'
+      self._group.updated = update.now
+      self._group.status = self._group.Status.closed
+      self._CommitGroup()
+    elif execution['state'] == workflow_service.EXECUTION_STATE_CANCELLED:
+      logging.info(
+          'Regression verification %s for project: %s and '
+          'bug: %s cancelled with error %s.', execution['name'],
+          self._group.project_id, self._group.bug.bug_id, execution['error'])
+      comment = ('%s Regression verification %s for test: %s\n'
+                 'cancelled with message %s. Proceed to bisection.' %
+                 (_SANDWICH, execution['name'], utils.TestPath(
+                     regression.test), execution['error']))
+      label = ['Regression-Verification-Cancelled']
+      proceed_with_bisect = True
+
+    perf_issue_service_client.PostIssueComment(
+        self._group.bug.bug_id,
+        self._group.project_id,
+        components=components,
+        comment=comment,
+        labels=label,
+        status=status,
+        send_email=False,
+    )
+
+    return proceed_with_bisect
+
   def _FileNormalUpdate(self,
                         all_regressions,
                         added,
@@ -464,7 +656,10 @@ class AlertGroupWorkflow:
         self._GetTemplateArgs(all_regressions))
     comment = None
     if new_regression_notification:
-      comment = _TEMPLATE_ISSUE_COMMENT.render(self._GetTemplateArgs(added))
+      template_args = self._GetTemplateArgs(added)
+      skia_args = self._GetSkiaTemplateArgs(added)
+      template_args.update(skia_args)
+      comment = _TEMPLATE_ISSUE_COMMENT.render(template_args)
     components, cc, labels = self._ComputeBugUpdate(subscriptions, added)
     perf_issue_service_client.PostIssueComment(
         self._group.bug.bug_id,
@@ -494,9 +689,8 @@ class AlertGroupWorkflow:
     subscriptions_dict = {}
     for a in anomalies:
       logging.info(
-          'GetRegressions: auto_triage_enable is %s for anomaly %s due to subscription: %s',
-          a.auto_triage_enable,
-          a.test.string_id(),
+          ('GetRegressions: auto_triage_enable is %s for anomaly %s due '
+           'to subscription: %s'), a.auto_triage_enable, a.test.string_id(),
           [s.name for s in a.subscriptions])
 
       subscriptions_dict.update({s.name: s for s in a.subscriptions})
@@ -521,18 +715,53 @@ class AlertGroupWorkflow:
       benchmarks_dict[name] = benchmark
     return list(benchmarks_dict.values())
 
-  def _ComputeBugUpdate(self, subscriptions, regressions):
-    components = list(
-        self._GetComponentsFromSubscriptions(subscriptions)
-        | self._GetComponentsFromRegressions(regressions))
-    if len(components) != 1:
-      logging.warning('Invalid component count is found for bug update: %s',
-                      components)
-      cloud_metric.PublistPerfIssueInvalidComponentCount(len(components))
-    cc = list(set(e for s in subscriptions for e in s.bug_cc_emails))
-    labels = list(
-        set(l for s in subscriptions for l in s.bug_labels)
-        | {'Chromeperf-Auto-Triaged'})
+  def _ComputeBugUpdate(self,
+                        subscriptions,
+                        regressions,
+                        delay_reporting=False):
+    if delay_reporting:
+      logging.debug('[DelayReporting] Ignoring reporting info for group %s',
+                    self._group.key)
+      components = [utils.DELAY_REPORTING_PLACEHOLDER]
+      cc = []
+      labels = [utils.DELAY_REPORTING_LABEL]
+    else:
+      # NOTE: Previous sandwich_allowlist checks resulted in this
+      # logic ignoring _GetComponentsFromRegressions for sandwich-able
+      # retressions. It no longer ignores these, so some sandwiched regressions
+      # may now have components assigned due to data uploaded from benchmark
+      # runners, rather than what's specified in the sheriff config.
+      # NOTE 2: Regression issues should now only get components assigned in
+      # three cases:
+      #   - regressions are NOT sandwich-able, due to _CheckSandwichAllowlist
+      #       results
+      #   - regressions are sandwich-able, AND issue has the
+      #       Regression-Verification-Repro label
+      #   - regressions are auto_triage=True AND auto_bisect=False
+      verifiable_regressions = self._CheckSandwichAllowlist(regressions)
+      components = []
+      if len(verifiable_regressions) == 0:
+        components = set(
+            self._GetComponentsFromSubscriptions(subscriptions)
+            | self._GetComponentsFromRegressions(regressions))
+        if len(components) != 1:
+          logging.warning('Invalid component count is found for bug update: %s',
+                          components)
+          cloud_metric.PublishPerfIssueInvalidComponentCount(len(components))
+      components = list(components)
+      cc = list(set(e for s in subscriptions for e in s.bug_cc_emails))
+      labels = list(set(l for s in subscriptions for l in s.bug_labels))
+
+    if any(r for r in regressions if r.source and r.source == 'skia'):
+      # If any priority is specified in the labels, let's remove it
+      # since we want the skia bugs to be low priority.
+      for l in labels:
+        if l.startswith('Pri-'):
+          labels.remove(l)
+      labels.append('DoNotNotify')
+      labels.append('Pri-3')
+
+    labels.append('Chromeperf-Auto-Triaged')
     # We layer on some default labels if they don't conflict with any of the
     # provided ones.
     if not any(l.startswith('Pri-') for l in labels):
@@ -550,8 +779,8 @@ class AlertGroupWorkflow:
       bug_id = self._group.bug or 'New'
       subsciption_names = [s.name for s in subscriptions]
       logging.debug(
-          'Components added from subscriptions. Bug: %s, subscriptions: %s, components: %s',
-          bug_id, subsciption_names, components)
+          ('Components added from subscriptions. Bug: %s, subscriptions: %s, '
+           'components: %s'), bug_id, subsciption_names, components)
     return components
 
   def _GetComponentsFromRegressions(self, regressions):
@@ -568,8 +797,8 @@ class AlertGroupWorkflow:
       bug_id = self._group.bug or 'New'
       benchmarks = [r.benchmark_name for r in regressions]
       logging.debug(
-          'Components added from benchmark.Info. Bug: %s, benchmarks: %s, components: %s',
-          bug_id, benchmarks, components)
+          ('Components added from benchmark.Info. Bug: %s, benchmarks: %s, '
+           'components: %s'), bug_id, benchmarks, components)
     return set(components)
 
   def _GetTemplateArgs(self, regressions):
@@ -592,13 +821,16 @@ class AlertGroupWorkflow:
     }
 
   def _Archive(self):
+    logging.debug('Archiving group: %s', self._group.key)
     self._group.active = False
 
   def _TryTriage(self, now, anomalies):
     bug, anomalies = self._FileIssue(anomalies)
     if not bug:
+      logging.debug('[GroupingDebug] No issue created for %s.', self._group.key)
       return
 
+    cloud_metric.PublishAutoTriagedIssue(cloud_metric.AUTO_TRIAGE_CREATED)
     # Update the issue associated with his group, before we continue.
     self._group.bug = bug
     self._group.updated = now
@@ -626,6 +858,155 @@ class AlertGroupWorkflow:
         project=self._group.project_id)
     return True
 
+  def _CheckSandwichAllowlist(self, regressions):
+    """Filter list of regressions against the sandwich verification
+    allowlist and improvement direction.
+
+    Args:
+      regressions: A list of regressions in the anomaly group.
+
+    Returns:
+      allowed_regressions: A list of sandwich verifiable regressions.
+    """
+    allowed_regressions = []
+    if not feature_flags.SANDWICH_VERIFICATION:
+      return allowed_regressions
+
+    for regression in regressions:
+      if not isinstance(regression, anomaly.Anomaly):
+        raise TypeError('%s is not anomaly.Anomaly' % type(regression))
+
+      if (regression.auto_triage_enable and regression.auto_bisect_enable
+          and sandwich_allowlist.CheckAllowlist(self._group.subscription_name,
+                                                regression.benchmark_name,
+                                                regression.bot_name)):
+        allowed_regressions.append(regression)
+
+    return allowed_regressions
+
+  def _TryVerifyRegression(self, update):
+    """Verify the selected regression using the sandwich verification workflow.
+
+    Args:
+      update: An alert group containing anomalies and potential regressions
+
+    Returns:
+      True or False, indicating whether or not it started a pinpoint job.
+    """
+    # Do not run sandwiching if anomaly subscription opts out of culprit finding
+    if (update.issue
+        and 'Chromeperf-Auto-BisectOptOut' in update.issue.get('labels')):
+      return False
+
+    # check if any regressions qualify for verification
+    regressions, _ = self._GetRegressions(update.anomalies)
+    verifiable_regressions = self._CheckSandwichAllowlist(regressions)
+    regression = self._SelectAutoBisectRegression(verifiable_regressions)
+
+    if not regression:
+      return False
+
+    start_git_hash = pinpoint_request.ResolveToGitHash(
+        regression.start_revision - 1,
+        regression.benchmark_name,
+        crrev=self._crrev)
+    end_git_hash = pinpoint_request.ResolveToGitHash(
+        regression.end_revision, regression.benchmark_name, crrev=self._crrev)
+
+    _, chart, _ = utils.ParseTelemetryMetricParts(
+        regression.test.get().test_path)
+    chart, statistic = utils.ParseStatisticNameFromChart(chart)
+
+    improvement_dir = self._GetImprovementDirection(regression)
+    logging.debug('Alert Group Workflow Debug - got improvement_direction: %s',
+                  improvement_dir)
+    create_exectution_req = {
+        'benchmark':
+            regression.benchmark_name,
+        'bot_name':
+            regression.bot_name,
+        'story':
+            regression.test.get().unescaped_story_name,
+        'measurement':
+            chart,
+        'target':
+            pinpoint_request.GetIsolateTarget(regression.bot_name,
+                                              regression.benchmark_name),
+        'start_git_hash':
+            start_git_hash,
+        'end_git_hash':
+            end_git_hash,
+        'project':
+            self._group.project_id,
+        'improvement_dir':
+            improvement_dir,
+    }
+    # Simultaneously trigger culprit finder (aka sandwich verification) in skia.
+    # We currently ignore the result, just to collect data.
+    try:
+      skia_pp_req = pinpoint_service.UpdateSkiaCulpritFinderRequest(
+          create_exectution_req, regression, self._group.bug.bug_id, statistic)
+      results = self._pinpoint.NewJobInSkia(skia_pp_req)
+      logging.info('[Pinpoint Skia] Triggering %s', results)
+    except Exception as e:  # pylint: disable=broad-except
+      # Caught all exceptions as we only need to trigger and log the runs.
+      msg = '[Pinpoint Skia] Error on triggering: %s\n%s'
+      logging.warning(msg, create_exectution_req, e)
+
+    logging.debug(
+        ('Alert Group Workflow Debug - creating verification workflow with '
+         'request: %s'), create_exectution_req)
+
+    try:
+      sandwich_execution_id = self._cloud_workflows.CreateExecution(
+          create_exectution_req)
+      self._group.sandwich_verification_workflow_id = sandwich_execution_id
+
+      self._group.status = self._group.Status.sandwiched
+      logging.info('sandwich_execution_id: %s', sandwich_execution_id)
+
+      self._group.updated = update.now
+
+      self._CommitGroup()
+      perf_issue_service_client.PostIssueComment(
+          self._group.bug.bug_id,
+          self._group.project_id,
+          comment=_TEMPLATE_AUTO_REGRESSION_VERIFICATION_COMMENT.render({
+              'test': utils.TestPath(regression.test),
+              'verification_workflow_id': sandwich_execution_id
+          }),
+          # Do not set labels yet on this issue, since we're only starting
+          # the sandwich verification to try and repro the regression before
+          # we alert any humans to the situation.
+          send_email=False,
+      )
+
+      return True
+    except request.NotFoundError:
+      return False
+    except request.RequestError:
+      return False
+
+  def _GetImprovementDirection(self, regression):
+    if regression is None:
+      return 'UNKNOWN'
+
+    test_path = utils.TestPath(regression.test)
+    if test_path is None:
+      return 'UNKNOWN'
+    logging.debug('Alert Group Workflow Debug - got test_path: %s', test_path)
+
+    t = graph_data.TestMetadata.get_by_id(test_path)
+    if t is not None:
+      logging.debug(
+          'Alert Group Workflow Debug - got improvement_direction: %s',
+          t.improvement_direction)
+      if t.improvement_direction == anomaly.UP:
+        return 'UP'
+      if t.improvement_direction == anomaly.DOWN:
+        return 'DOWN'
+    return 'UNKNOWN'
+
   def _TryBisect(self, update):
     if (update.issue
         and 'Chromeperf-Auto-BisectOptOut' in update.issue.get('labels')):
@@ -639,7 +1020,24 @@ class AlertGroupWorkflow:
       if regression is None:
         return
 
-      # We'll only bisect a range if the range at least one point.
+      if self._group.status == self._group.Status.sandwiched:
+        # Get the verdict from the workflow execution results.
+        try:
+          sandwich_exec = self._cloud_workflows.GetExecution(
+              self._group.sandwich_verification_workflow_id)
+        except request.NotFoundError:
+          logging.error(
+              ('cloud workflow service could not find sandwich verification '
+               'execution ID %s'),
+              self._group.sandwich_verification_workflow_id)
+          return
+
+        proceed_with_bisect = self._UpdateRegressionVerification(
+            sandwich_exec, regression, update)
+        if not proceed_with_bisect:
+          return
+
+    # We'll only bisect a range if the range at least one point.
       if regression.start_revision == regression.end_revision:
         # At this point we've decided that the range of the commits is a single
         # point, so we don't bother bisecting.
@@ -654,6 +1052,7 @@ class AlertGroupWorkflow:
         return
 
       job_id = self._StartPinpointBisectJob(regression)
+      cloud_metric.PublishAutoTriagedIssue(cloud_metric.AUTO_TRIAGE_BISECTED)
     except InvalidPinpointRequest as error:
       self._UpdateWithBisectError(update.now, error)
       return
@@ -675,6 +1074,31 @@ class AlertGroupWorkflow:
     regression.pinpoint_bisects.append(job_id)
     regression.put()
 
+  def _GetSkiaTemplateArgs(self, regressions):
+    """Return skia template args to append to the existing template args"""
+    masters = set()
+    for r in regressions:
+      if r.master_name:
+        masters.add(r.master_name)
+
+    template_args = {}
+    try:
+      # Add the public url only if at least one of the anomalies in the group
+      # are public
+      if any(not r.test.get().internal_only for r in regressions):
+        skia_urls_public = skia_helper.GetSkiaUrlsForAlertGroup(
+            self._group.key.string_id(), False, list(masters))
+        template_args['skia_urls_text_public'] = skia_urls_public
+    except Exception:  #pylint: disable=broad-except
+      template_args['skia_urls_text_public'] = None
+    try:
+      skia_urls_internal = skia_helper.GetSkiaUrlsForAlertGroup(
+          self._group.key.string_id(), True, list(masters))
+      template_args['skia_urls_text_internal'] = skia_urls_internal
+    except Exception:  # pylint: disable=broad-except
+      template_args['skia_urls_text_internal'] = None
+    return template_args
+
   def _FileIssue(self, anomalies):
     regressions, subscriptions = self._GetRegressions(anomalies)
     # Only file a issue if there is at least one regression
@@ -687,8 +1111,8 @@ class AlertGroupWorkflow:
     for r in regressions:
       if r.auto_triage_enable:
         auto_triage_regressions.append(r)
-    logging.info('auto_triage_enabled due to %s', auto_triage_regressions)
 
+    logging.info('auto_triage_enabled due to %s', auto_triage_regressions)
     template_args = self._GetTemplateArgs(regressions)
     top_regression = template_args['regressions'][0]
     template_args['revision_infos'] = self._revision_info.GetRangeRevisionInfo(
@@ -696,12 +1120,41 @@ class AlertGroupWorkflow:
         top_regression.start_revision,
         top_regression.end_revision,
     )
+
+    skia_args = self._GetSkiaTemplateArgs(regressions)
+    template_args.update(skia_args)
+
     # Rendering issue's title and content
     title = _TEMPLATE_ISSUE_TITLE.render(template_args)
     description = _TEMPLATE_ISSUE_CONTENT.render(template_args)
 
+    # DelayReporting: we decided to delay the reporting until we find a root
+    # cause if any. The reason is: the alert group can be a false positive and
+    # thus the issue created is a cannot-reproduce.
+    # To delay the reporting, the fields which trigger notifications (emails)
+    # will be removed when the issue is created. Those fields will be updated
+    # when bisection finds a culprit. A label 'Chromeperf-Delay-Reporting' is
+    # added to tell Pinpoint to do the reporting.
+    # If auto-bisect is not enabled, we will still do reporting because we
+    # cannot rely on manual bisects to add those inf.
+
+    # NOTICE that we do not have benchmark class in Pinpoint workflow and thus
+    # do not have the component info from the @benchmark.info. E.g.:
+    # https://source.chromium.org/chromium/chromium/src/+/main:
+    # tools/perf/benchmarks/jetstream2.py;l=44
+    # We will only add component, cc and labels based on the settings from
+    # the Sheriff Config.
+
+    should_delay_reporting = utils.ShouldDelayIssueReporting()
+    if should_delay_reporting:
+      should_bisect = any(
+          r.auto_bisect_enable and not r.is_improvement for r in regressions)
+      logging.debug('[DelayReporting] should_bisect %s for group %s.',
+                    should_bisect, self._group.key)
+      should_delay_reporting = should_delay_reporting and should_bisect
     # Fetching issue labels, components and cc from subscriptions and owner
-    components, cc, labels = self._ComputeBugUpdate(subscriptions, regressions)
+    components, cc, labels = self._ComputeBugUpdate(subscriptions, regressions,
+                                                    should_delay_reporting)
     logging.info('Creating a new issue for AlertGroup %s', self._group.key)
 
     response = perf_issue_service_client.PostIssue(
@@ -711,8 +1164,11 @@ class AlertGroupWorkflow:
         components=components,
         cc=cc,
         project=self._group.project_id)
+    logging.debug('[GroupingDebug] PostIssue response for %s: %s',
+                  self._group.key, response)
     if 'error' in response:
-      logging.warning('AlertGroup file bug failed: %s', response['error'])
+      logging.warning('AlertGroup %s file bug failed: %s', self._group.key,
+                      response['error'])
       return None, []
 
     # Update the issue associated witht his group, before we continue.
@@ -722,8 +1178,14 @@ class AlertGroupWorkflow:
     ), anomalies
 
   def _StartPinpointBisectJob(self, regression):
+    pp_request = None
     try:
-      results = self._pinpoint.NewJob(self._NewPinpointRequest(regression))
+      pp_request = self._NewPinpointRequest(regression)
+    except pinpoint_request.InvalidParamsError as e:
+      six.raise_from(
+          InvalidPinpointRequest('Invalid pinpoint request: %s' % (e,)), e)
+    try:
+      results = self._pinpoint.NewJob(pp_request)
     except pinpoint_request.InvalidParamsError as e:
       six.raise_from(
           InvalidPinpointRequest('Invalid pinpoint request: %s' % (e,)), e)
@@ -740,12 +1202,17 @@ class AlertGroupWorkflow:
     # 2. has a valid bug_id
     # 3. hasn't start a bisection
     # 4. is not a summary metric (has story)
-    regressions = [
-        r for r in regressions or []
-        if (r.auto_bisect_enable and r.bug_id > 0
-            and not set(r.pinpoint_bisects) & set(self._group.bisection_ids)
-            and r.test.get().unescaped_story_name)
-    ]
+    filtered_regressions = []
+    for r in regressions:
+      if not r.bug_id:
+        logging.error('No bug_id found in anomaly %s', r.key.id())
+        continue
+      if (r.auto_bisect_enable and r.bug_id > 0
+          and not set(r.pinpoint_bisects) & set(self._group.bisection_ids)
+          and r.test.get().unescaped_story_name):
+        filtered_regressions.append(r)
+    regressions = filtered_regressions
+
     if not regressions:
       return None
 
@@ -812,10 +1279,26 @@ class AlertGroupWorkflow:
     if not target:
       return None
 
-    job_name = 'Auto-Bisection on %s/%s' % (alert.bot_name,
+    tags = {
+        'test_path': utils.TestPath(alert.test),
+        'alert': six.ensure_str(alert.key.urlsafe()),
+        'auto_bisection': 'true',
+    }
+    if alert.source and alert.source == 'skia':
+      alert_magnitude = None
+      # Adding the tag below to distinguish jobs created for skia regressions.
+      # This should help us measure the culprit detection rate separately for
+      # skia regressions.
+      tags['source'] = 'skia'
+      job_name = '[Skia] Auto-Bisection on %s/%s' % (alert.bot_name,
+                                            alert.benchmark_name)
+    else:
+      alert_magnitude = alert.median_after_anomaly - alert.median_before_anomaly
+      job_name = 'Auto-Bisection on %s/%s' % (alert.bot_name,
                                             alert.benchmark_name)
 
-    alert_magnitude = alert.median_after_anomaly - alert.median_before_anomaly
+    if self._group.status == self._group.Status.sandwiched:
+      tags['sandwiched'] = 'true'
     return pinpoint_service.MakeBisectionRequest(
         test=alert.test.get(),
         commit_range=pinpoint_service.CommitRange(
@@ -829,11 +1312,7 @@ class AlertGroupWorkflow:
         comparison_magnitude=alert_magnitude,
         name=job_name,
         priority=10,
-        tags={
-            'test_path': utils.TestPath(alert.test),
-            'alert': six.ensure_str(alert.key.urlsafe()),
-            'auto_bisection': 'true',
-        },
+        tags=tags,
     )
 
   def _UpdateWithBisectError(self, now, error, labels=None):

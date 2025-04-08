@@ -47,46 +47,15 @@ steps:
     upload.yaml,
     pinpoint.yaml,
   ]
-# We check in the target versions to avoid unintended traffic changes.
 - name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Set traffic for default service'
   dir: 'deploy-dashboard'
   args: [
-    'app', 'services', 'set-traffic', 'default',
-    '--splits=cloud-build-568df55=1'
-  ]
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Set traffic for api service'
-  dir: 'deploy-dashboard'
-  args: [
-    'app', 'services', 'set-traffic', 'api',
-    '--splits=cloud-build-7b96e7a=1'
-  ]
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Set traffic for upload service'
-  dir: 'deploy-dashboard'
-  args: [
-    'app', 'services', 'set-traffic', 'upload',
-    '--splits=cloud-build-7b96e7a=1'
-  ]
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Set traffic for upload-processing service'
-  dir: 'deploy-dashboard'
-  args: [
-    'app', 'services', 'set-traffic', 'upload-processing',
-    '--splits=cloud-build-efe5fd8=1',
-  ]
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Set traffic for pinpoint service'
-  dir: 'deploy-dashboard'
-  args: [
-    'app', 'services', 'set-traffic', 'pinpoint',
-    '--splits=cloud-build-fdeb9d4=1'
+    'app', 'deploy', 'queue.yaml',
   ]
 - name: 'gcr.io/cloud-builders/gcloud'
   entrypoint: '/bin/bash'
   args: [
     '-x', '-e', 'dashboard/dev_dockerfiles/cleanup_versions.sh',
-    'api', 'default', 'pinpoint', 'upload-processing', 'upload'
+    '21', 'api', 'default', 'pinpoint', 'upload-processing', 'upload'
   ]
 images: ['gcr.io/$PROJECT_ID/dashboard-base:latest']

@@ -30,23 +30,23 @@ from gslib.tests.util import SetBotoConfigForTest
 class TestAutoclassUnit(testcase.GsUtilUnitTestCase):
 
   def test_set_too_few_arguments_fails(self):
-    with self.assertRaisesRegexp(exception.CommandException,
-                                 'command requires at least'):
+    with self.assertRaisesRegex(exception.CommandException,
+                                'command requires at least'):
       self.RunCommand('autoclass', ['set'])
 
   def test_get_too_few_arguments_fails(self):
-    with self.assertRaisesRegexp(exception.CommandException,
-                                 'command requires at least'):
+    with self.assertRaisesRegex(exception.CommandException,
+                                'command requires at least'):
       self.RunCommand('autoclass', ['get'])
 
   def test_no_subcommand_fails(self):
-    with self.assertRaisesRegexp(exception.CommandException,
-                                 'command requires at least'):
+    with self.assertRaisesRegex(exception.CommandException,
+                                'command requires at least'):
       self.RunCommand('autoclass', [])
 
   def test_invalid_subcommand_fails(self):
-    with self.assertRaisesRegexp(exception.CommandException,
-                                 'Invalid subcommand'):
+    with self.assertRaisesRegex(exception.CommandException,
+                                'Invalid subcommand'):
       self.RunCommand('autoclass', ['fakecommand', 'test'])
 
   def test_gets_multiple_buckets_with_wildcard(self):
@@ -76,26 +76,34 @@ class TestAutoclassE2E(testcase.GsUtilIntegrationTestCase):
   def test_turning_on_and_off(self):
     bucket_uri = self.CreateBucket()
 
-    stdout = self.RunGsUtil(self._set_autoclass_cmd +
-                            ['on', suri(bucket_uri)],
-                            return_stdout=True)
-    self.assertRegex(
-        stdout,
-        re.escape('Setting Autoclass on for {}\n'.format(
-            str(bucket_uri).rstrip('/'))))
+    stdout, stderr = self.RunGsUtil(self._set_autoclass_cmd +
+                                    ['on', suri(bucket_uri)],
+                                    return_stdout=True,
+                                    return_stderr=True)
+    if self._use_gcloud_storage:
+      self.assertRegex(stderr, re.escape('Updating {}'.format(str(bucket_uri))))
+    else:
+      self.assertRegex(
+          stdout,
+          re.escape('Setting Autoclass on for {}\n'.format(
+              str(bucket_uri).rstrip('/'))))
 
     stdout = self.RunGsUtil(self._get_autoclass_cmd + [suri(bucket_uri)],
                             return_stdout=True)
     self.assertRegex(stdout, r'Enabled: True')
     self.assertRegex(stdout, r'Toggle Time: \d+')
 
-    stdout = self.RunGsUtil(self._set_autoclass_cmd +
-                            ['off', suri(bucket_uri)],
-                            return_stdout=True)
-    self.assertRegex(
-        stdout,
-        re.escape('Setting Autoclass off for {}\n'.format(
-            str(bucket_uri).rstrip('/'))))
+    stdout, stderr = self.RunGsUtil(self._set_autoclass_cmd +
+                                    ['off', suri(bucket_uri)],
+                                    return_stdout=True,
+                                    return_stderr=True)
+    if self._use_gcloud_storage:
+      self.assertRegex(stderr, re.escape('Updating {}'.format(str(bucket_uri))))
+    else:
+      self.assertRegex(
+          stdout,
+          re.escape('Setting Autoclass off for {}\n'.format(
+              str(bucket_uri).rstrip('/'))))
 
     stdout = self.RunGsUtil(self._get_autoclass_cmd + [suri(bucket_uri)],
                             return_stdout=True)

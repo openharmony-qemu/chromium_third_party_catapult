@@ -21,6 +21,7 @@ See go/resultdb and go/resultsink for more details.
 """
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -72,6 +73,7 @@ class ResultSinkReporter(object):
         self._session = None
         self._chromium_src_dir = None
         self._output_file = output_file
+        self._pending_results = None
         if disable:
             return
 
@@ -124,7 +126,8 @@ class ResultSinkReporter(object):
 
     def report_individual_test_result(
             self, result, artifact_output_dir, expectations, test_file_location,
-            test_file_line=None, test_name_prefix='', additional_tags=None):
+            test_file_line=None, test_name_prefix='', additional_tags=None,
+            html_summary=None):
         """Reports a single test result to ResultSink.
 
         Inputs are typically similar to what is passed to
@@ -148,6 +151,9 @@ class ResultSinkReporter(object):
                     to the test name.
             additional_tags: An optional dict of additional tags to report to
                     ResultDB.
+            html_summary: Optional human-readable explanation of the result as
+                    sanitized HTML. If omitted, the reporter will generate a
+                    default summary with links extracted from artifacts.
 
         Returns:
             0 if the result was reported successfully or ResultDB is not
@@ -227,18 +233,20 @@ class ResultSinkReporter(object):
                             artifact_output_dir, artifact_filepaths[0]),
                 }
 
-        artifacts[STDOUT_KEY] = {
-            'contents': (base64.b64encode(
-                             result.out.encode('utf-8')).decode('utf-8'))
-        }
-        artifacts[STDERR_KEY] = {
-            'contents': (base64.b64encode(
-                             result.err.encode('utf-8')).decode('utf-8'))
-        }
-        html_summary = https_artifacts
-        html_summary += ('<p><text-artifact artifact-id="%s"/></p>'
-                         '<p><text-artifact artifact-id="%s"/></p>' % (
-                             STDOUT_KEY, STDERR_KEY))
+        for artifact_id, contents in [(STDOUT_KEY, result.out),
+                                      (STDERR_KEY, result.err)]:
+            if contents:
+                artifacts[artifact_id] = {
+                    'contents': base64.b64encode(
+                        contents.encode('utf-8')).decode('utf-8'),
+                }
+
+        if not html_summary:
+            html_summary = https_artifacts
+            for artifact_id in [STDOUT_KEY, STDERR_KEY]:
+                if artifact_id in artifacts:
+                    html_summary += (
+                        '<p><text-artifact artifact-id="%s"/></p>' % artifact_id)
 
         test_location_in_repo = self._convert_path_to_repo_path(
             os.path.normpath(test_file_location))
@@ -258,6 +266,38 @@ class ResultSinkReporter(object):
                 test_id, status, result_is_expected, artifacts, tag_list,
                 html_summary, result.took, test_metadata, result.failure_reason)
 
+    @contextlib.contextmanager
+    def batch_results(self):
+        """Begin buffering test results, which will be uploaded on exit.
+
+        This method allows callers to report multiple test results in one
+        request. Batching results can significantly improve the performance of
+        `report_individual_test_result()`, which defaults to one result per
+        request.
+
+        Usage notes:
+          * The reporter is not threadsafe while batching is active.
+          * The returned context manager is not reentrant.
+          * An exception that reaches the context manager will cancel the
+            pending upload, but is otherwise not handled.
+        """
+        if self._pending_results is not None:
+            raise ResultSinkError('`batch_results()` cannot be nested')
+        self._pending_results = json_results.ResultSet()
+        try:
+            yield
+            if self._pending_results.results:
+                payload = json.dumps({
+                    'testResults': self._pending_results.results,
+                })
+                status = self._post(self._url, payload)
+                if status != 0:
+                    # There's no easy way to pass the status code to the caller,
+                    # so signal failure through an exception instead.
+                    raise ResultSinkError(
+                        f'failed to upload batch results (status: {status})')
+        finally:
+            self._pending_results = None
 
     def _report_result(
             self, test_id, status, expected, artifacts, tag_list, html_summary,
@@ -292,6 +332,10 @@ class ResultSinkReporter(object):
                 test_id, status, expected, artifacts, tag_list, html_summary,
                 duration, test_metadata, failure_reason)
 
+        if self._pending_results:
+            self._pending_results.add(test_result)
+            # Treat the deferred upload as a tentative success.
+            return 0
         return self._post(self._url, json.dumps({'testResults': [test_result]}))
 
     def _post(self, url, content):
@@ -348,6 +392,10 @@ class ResultSinkReporter(object):
                 src_dir += self.host.sep
             self._chromium_src_dir = src_dir
         return self._chromium_src_dir
+
+
+class ResultSinkError(Exception):
+    """Base exception for errors when using a result sink reporter."""
 
 
 def _create_json_test_result(

@@ -9,7 +9,7 @@ from __future__ import absolute_import
 import base64
 import itertools
 import json
-import mock
+from unittest import mock
 
 from dashboard.pinpoint.handlers import task_updates
 from dashboard.pinpoint.models import job as job_module
@@ -175,6 +175,9 @@ class ExecutionEngineTaskUpdatesTest(bisection_test_util.BisectionTestBase):
   @mock.patch('dashboard.services.swarming.Task.Result')
   @mock.patch('dashboard.services.isolate.Retrieve')
   @mock.patch.object(results2_module, 'GetCachedResults2', return_value='')
+  @mock.patch(
+      'dashboard.services.perf_issue_service_client.GetAlertGroupQuality',
+      mock.MagicMock(return_value={'result': 'Good'}))
   def testExecutionEngineJobUpdates(self, _, isolate_retrieve,
                                     swarming_task_result, swarming_tasks_new,
                                     isolate_get, buildbucket_getjobstatus,

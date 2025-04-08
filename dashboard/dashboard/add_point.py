@@ -144,8 +144,6 @@ def AddData(data_str):
     return request_handler.RequestHandlerReportError(
         'Invalid JSON string.', status=400)
 
-  logging.info('Received data: %s', data)
-
   try:
     if isinstance(data, dict):
       if data.get('chart_data'):
@@ -761,7 +759,12 @@ def GetAndValidateRowProperties(row):
       columns['error'] = error
     except (ValueError, TypeError):
       logging.warning('Bad value for "error".')
-
+  if 'swarming_bot_id' in row:
+    try:
+      swarming_bot_id = str(row['swarming_bot_id'])
+      columns['swarming_bot_id'] = swarming_bot_id
+    except (ValueError, TypeError):
+      logging.warning('Bad value for "swarming_bot_id".')
   columns.update(_GetSupplementalColumns(row))
   return columns
 

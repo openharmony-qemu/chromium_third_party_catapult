@@ -13,6 +13,71 @@ Expectation = expectations_parser.Expectation
 TestExpectations = expectations_parser.TestExpectations
 
 
+class ExpectationTest(unittest.TestCase):
+    def create_expectation_with_values(self,
+                                       reason='crbug.com/1234',
+                                       test='foo',
+                                       retry_on_failure=True,
+                                       is_slow_test=True,
+                                       tags=['win'],
+                                       results=['FAIL'],
+                                       lineno=10,
+                                       trailing_comments=' # comment',
+                                       encode_func=None):
+        return expectations_parser.Expectation(
+            reason=reason,
+            test=test,
+            retry_on_failure=retry_on_failure,
+            is_slow_test=is_slow_test,
+            tags=tags,
+            results=results,
+            lineno=lineno,
+            trailing_comments=trailing_comments,
+            encode_func=encode_func)
+
+    def testEquality(self):
+        e = self.create_expectation_with_values()
+        other = self.create_expectation_with_values()
+        self.assertEqual(e, other)
+
+        other = self.create_expectation_with_values(reason='crbug.com/2345')
+        self.assertNotEqual(e, other)
+
+        other = self.create_expectation_with_values(test='bar')
+        self.assertNotEqual(e, other)
+
+        other = self.create_expectation_with_values(retry_on_failure=False)
+        self.assertNotEqual(e, other)
+
+        other = self.create_expectation_with_values(is_slow_test=False)
+        self.assertNotEqual(e, other)
+
+        other = self.create_expectation_with_values(tags=['linux'])
+        self.assertNotEqual(e, other)
+
+        other = self.create_expectation_with_values(results=['Pass'])
+        self.assertNotEqual(e, other)
+
+        other = self.create_expectation_with_values(lineno=20)
+        self.assertNotEqual(e, other)
+
+        other = self.create_expectation_with_values(trailing_comments='c')
+        self.assertNotEqual(e, other)
+
+        other = self.create_expectation_with_values(encode_func=lambda x: x)
+        self.assertNotEqual(e, other)
+
+    def testEncodeApplied(self):
+        e = expectations_parser.Expectation(reason='crbug.com/1234',
+                                            test='foo',
+                                            tags=['win'],
+                                            results=['FAIL'],
+                                            trailing_comments=' # comment',
+                                            encode_func=lambda _: 'bar')
+        self.assertEqual(e.to_string(),
+                        'crbug.com/1234 [ Win ] bar [ Failure ] # comment')
+
+
 class TaggedTestListParserTest(unittest.TestCase):
     def testInitWithGoodData(self):
         good_data = """
@@ -28,8 +93,8 @@ crbug.com/12345 [ Mac ] b1/s1 [ Skip ] # foo
 crbug.com/23456 [ Mac Debug ] b1/s2 [ Skip ]
 """
         parser = expectations_parser.TaggedTestListParser(good_data)
-        tag_sets = [{'debug', 'release'},
-                    {'linux', 'mac', 'mac10.1', 'mac10.2', 'win'}]
+        tag_sets = set([frozenset(['debug', 'release']),
+                    frozenset(['linux', 'mac', 'mac10.1', 'mac10.2', 'win'])])
         self.assertEqual(tag_sets, parser.tag_sets)
         expected_outcome = [
             expectations_parser.Expectation('crbug.com/12345', 'b1/s1',
@@ -203,30 +268,6 @@ crbug.com/12345 [ tag1 ] b1/s1 [ Skip ]
         expected_outcomes = [
             expectations_parser.Expectation(
                 'crbug.com/123', 'b.1/http://google.com', ['mac'], ['SKIP'], 3)
-        ]
-        parser = expectations_parser.TaggedTestListParser(raw_data)
-        for i in range(len(parser.expectations)):
-            self.assertEqual(parser.expectations[i], expected_outcomes[i])
-
-    def testParseExpectationSpaceEscapeInTestName(self):
-        raw_data = (
-            '# tags: [ Mac ]\n# results: [ Skip ]\ncrbug.com/123 [ Mac ] http://google.com/Foo%20Bar [ Skip ]'
-        )
-        expected_outcomes = [
-            expectations_parser.Expectation(
-                'crbug.com/123', 'http://google.com/Foo Bar', ['mac'], ['SKIP'], 3)
-        ]
-        parser = expectations_parser.TaggedTestListParser(raw_data)
-        for i in range(len(parser.expectations)):
-            self.assertEqual(parser.expectations[i], expected_outcomes[i])
-
-    def testParseExpectationPercentEscapeInTestName(self):
-        raw_data = (
-            '# tags: [ Mac ]\n# results: [ Skip ]\ncrbug.com/123 [ Mac ] http://google.com/Foo%2520Bar [ Skip ]'
-        )
-        expected_outcomes = [
-            expectations_parser.Expectation(
-                'crbug.com/123', 'http://google.com/Foo%20Bar', ['mac'], ['SKIP'], 3)
         ]
         parser = expectations_parser.TaggedTestListParser(raw_data)
         for i in range(len(parser.expectations)):
@@ -496,6 +537,79 @@ crbug.com/12345 [ tag3 tag4 ] b1/s1 [ Skip ]
                          Expectation(
                              test='b1/s4', results={ResultType.Pass}, retry_on_failure=False,
                              is_slow_test=False))
+
+    def testParseMultipleListsNonMatchingTagSets(self):
+        initial_data = (
+            '# tags: [ linux ]\n'
+            '# results: [ Failure RetryOnFailure Slow ]\n'
+            '[ linux ] foo.html [ Failure ]\n')
+        secondary_data = (
+            '# tags: [ win ]\n'
+            '# results: [ Failure RetryOnFailure Slow ]\n'
+            '[ win ] foo.html [ Failure ]\n')
+        parser = expectations_parser.TestExpectations()
+        parser.parse_tagged_list(initial_data)
+        with self.assertRaisesRegexp(RuntimeError,
+            'Existing tag sets .* do not match incoming sets .*'):
+            parser.parse_tagged_list(secondary_data)
+
+    def testParseMultipleListsMatchingTagSets(self):
+        """Verify parsing multiple lists is equivalent to a single combined list."""
+        initial_data = (
+            '# tags: [ linux ]\n'
+            '# results: [ Failure RetryOnFailure Slow ]\n'
+            '[ linux ] foo.html [ Failure ]\n'
+            '[ linux ] asdf* [ Failure ]\n')
+        secondary_data = (
+            '# tags: [ linux ]\n'
+            '# results: [ Failure RetryOnFailure Slow ]\n'
+            '[ linux ] bar.html [ Failure ]\n'
+            '[ linux ] qwer* [ Failure ]\n')
+        combined_data = (
+            '# tags: [ linux ]\n'
+            '# results: [ Failure RetryOnFailure Slow ]\n'
+            '[ linux ] foo.html [ Failure ]\n'
+            '[ linux ] bar.html [ Failure ]\n'
+            '[ linux ] asdf* [ Failure ]\n'
+            '[ linux ] qwer* [ Failure ]\n')
+
+        parser = expectations_parser.TestExpectations(['linux'])
+        parser.parse_tagged_list(initial_data)
+        parser.parse_tagged_list(secondary_data)
+        combined_parser = expectations_parser.TestExpectations(['linux'])
+        combined_parser.parse_tagged_list(combined_data)
+
+        foo_expectation = expectations_parser.Expectation(
+            test='foo.html', results=[json_results.ResultType.Failure],
+            tags=['linux'])
+        self.assertEqual(parser.expectations_for('foo.html'),
+                         foo_expectation)
+        self.assertEqual(combined_parser.expectations_for('foo.html'),
+                         foo_expectation)
+
+        bar_expectation = expectations_parser.Expectation(
+            test='bar.html', results=[json_results.ResultType.Failure],
+            tags=['linux'])
+        self.assertEqual(parser.expectations_for('bar.html'),
+                         bar_expectation)
+        self.assertEqual(combined_parser.expectations_for('bar.html'),
+                         bar_expectation)
+
+        asdf_expectation = expectations_parser.Expectation(
+            test='asdf/test.html', results=[json_results.ResultType.Failure],
+            tags=['linux'])
+        self.assertEqual(parser.expectations_for('asdf/test.html'),
+                         asdf_expectation)
+        self.assertEqual(combined_parser.expectations_for('asdf/test.html'),
+                         asdf_expectation)
+
+        qwer_expectation = expectations_parser.Expectation(
+            test='qwer/test.html', results=[json_results.ResultType.Failure],
+            tags=['linux'])
+        self.assertEqual(parser.expectations_for('qwer/test.html'),
+                         qwer_expectation)
+        self.assertEqual(combined_parser.expectations_for('qwer/test.html'),
+                         qwer_expectation)
 
     def testMergeExpectationsUsingUnionResolution(self):
         raw_data1 = (
@@ -912,20 +1026,6 @@ crbug.com/12345 [ tag3 tag4 ] b1/s1 [ Skip ]
         self.assertEqual(
             exp.to_string(), 'crbug.com/123 [ Intel ] test.html?\* [ Failure Pass RetryOnFailure Slow ]')
 
-    def testExpectationWithSpaceInTestNameToString(self):
-        exp = Expectation(reason='crbug.com/123', test='test.html?Foo Bar', tags=['intel'],
-                          results={ResultType.Pass, ResultType.Failure}, is_slow_test=False,
-                          retry_on_failure=False)
-        self.assertEqual(
-            exp.to_string(), 'crbug.com/123 [ Intel ] test.html?Foo%20Bar [ Failure Pass ]')
-
-    def testExpectationWithPercentInTestNameToString(self):
-        exp = Expectation(reason='crbug.com/123', test='test.html?Foo%Bar', tags=['intel'],
-                          results={ResultType.Pass, ResultType.Failure}, is_slow_test=False,
-                          retry_on_failure=False)
-        self.assertEqual(
-            exp.to_string(), 'crbug.com/123 [ Intel ] test.html?Foo%25Bar [ Failure Pass ]')
-
     def testGlobExpectationToString(self):
         exp = Expectation(reason='crbug.com/123', test='a/*/test.html?*', tags=['intel'],
                           results={ResultType.Pass, ResultType.Failure}, is_slow_test=True,
@@ -1000,3 +1100,14 @@ crbug.com/12345 [ tag3 tag4 ] b1/s1 [ Skip ]
         assert not ret, errors
         self.assertEqual(list(test_exps.individual_exps),
                          ['test1','test2','test8', 'test9', 'test5', 'test.*'])
+
+    def testDuplicateTagsInTagsRaisesError(self):
+        raw_data = (
+            '# tags: [ Mac Win Linux Win ]\n'
+            '# tags: [ Batman Robin Superman ]\n'
+            '# results: [ Failure ]\n'
+            'crbug.com/23456 [ Batman ] b1/s1 [ Failure ]\n')
+        with self.assertRaises(expectations_parser.ParseError) as context:
+            expectations_parser.TaggedTestListParser(raw_data)
+        self.assertIn('1: duplicate tag(s): Win',
+                      str(context.exception))

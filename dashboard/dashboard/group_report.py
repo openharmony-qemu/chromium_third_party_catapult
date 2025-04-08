@@ -34,6 +34,7 @@ def GroupReportGet():
   return request_handler.RequestHandlerRenderStaticHtml('group_report.html')
 
 
+@cloud_metric.APIMetric("chromeperf", "/group_report")
 def GroupReportPost():
   """Returns dynamic data for /group_report with some set of alerts.
 
@@ -86,8 +87,10 @@ def GroupReportPost():
     else:
       raise request_handler.InvalidInputError('No anomalies specified.')
 
-    alert_dicts = alerts.AnomalyDicts(
-        [a for a in alert_list if a.key.kind() == 'Anomaly'])
+    alert_dicts = alerts.AnomalyDicts([
+        a for a in alert_list
+        if a.key.kind() == 'Anomaly' and a.source != 'skia'
+    ])
 
     values = {
         'alert_list': alert_dicts,
@@ -204,13 +207,15 @@ def GetAlertsForGroupID(group_id):
     raise request_handler.InvalidInputError('Invalid AlertGroup ID "%s".' %
                                             group_id)
   anomalies = perf_issue_service_client.GetAnomaliesByAlertGroupID(group_id)
-  anomaly_keys = [ndb.Key('Anomaly', a) for a in anomalies]
+  anomaly_keys = [
+      ndb.Key('Anomaly', a) for a in anomalies if isinstance(a, int)
+  ]
   if sorted(anomaly_keys) != sorted(group.anomalies):
     logging.warning('Imparity found for GetAnomaliesByAlertGroupID. %s, %s',
                     group.anomalies, anomaly_keys)
     cloud_metric.PublishPerfIssueServiceGroupingImpariry(
         'GetAnomaliesByAlertGroupID')
-  return ndb.get_multi(group.anomalies)
+  return ndb.get_multi(anomaly_keys)
 
 
 def _IsInt(x):

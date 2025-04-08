@@ -111,6 +111,9 @@ class Bot(internal_only_model.InternalOnlyModel):
       internal_only = yield cls.GetInternalOnlyAsync(master, bot)
       raise ndb.Return(internal_only)
     except AssertionError as e:
+      logging.warning(
+          'Failed to get internal_only for (master: %s, bot: %s). Error: %s.',
+          master, bot, e)
       six.raise_from(ndb.Return(True), e)
 
   @staticmethod
@@ -118,6 +121,8 @@ class Bot(internal_only_model.InternalOnlyModel):
   def GetInternalOnlyAsync(master, bot):
     bot_entity = yield ndb.Key('Master', master, 'Bot', bot).get_async()
     if bot_entity is None:
+      logging.warning('Failed to find Bot Entity with master %s and bot %s.',
+                      master, bot)
       raise ndb.Return(True)
     raise ndb.Return(bot_entity.internal_only)
 
@@ -141,11 +146,8 @@ class TestMetadata(internal_only_model.CreateHookInternalOnlyModel):
   NOTE: If you remove any properties from TestMetadata, they should be added to
   the TEST_EXCLUDE_PROPERTIES list in migrate_test_names.py.
   """
-  # Our access patterns don't generally involve the same TestMetadata being
-  # accessed again and again across multiple requests. Don't put them into
-  # memcache when accessed by default. For more info, see:
-  # https://cloud.google.com/appengine/docs/python/ndb/cache
-  _use_memcache = False
+  # Enable memcache to reduce Firestore Read Ops cost.
+  _use_memcache = True
 
   internal_only = ndb.BooleanProperty(default=False, indexed=True)
 
@@ -395,6 +397,9 @@ class Row(ndb.Expando):
 
   # The standard deviation at this point. Optional.
   error = ndb.FloatProperty(indexed=False)
+
+  # A *single* swarming device ID, or None. Never multiple.
+  swarming_bot_id = ndb.StringProperty(indexed=True)
 
   @ndb.ComputedProperty
   def expiry(self):  # pylint: disable=invalid-name

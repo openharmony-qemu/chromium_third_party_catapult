@@ -39,6 +39,8 @@ from gslib.utils import parallelism_framework_util
 from gslib.utils.cloud_api_helper import GetCloudApiInstance
 from gslib.utils.metadata_util import IsCustomMetadataHeader
 from gslib.utils.retry_util import Retry
+from gslib.utils.shim_util import GcloudStorageFlag
+from gslib.utils.shim_util import GcloudStorageMap
 from gslib.utils.text_util import InsistAsciiHeader
 from gslib.utils.text_util import InsistAsciiHeaderValue
 from gslib.utils.translation_helper import CopyObjectMetadata
@@ -91,19 +93,17 @@ _DETAILED_HELP_TEXT = ("""
   distinguishes it from standard request headers. Other tools that send and
   receive object metadata by using the request body do not use this prefix.
 
-  See "gsutil help metadata" for details about how you can set metadata
-  while uploading objects, what metadata fields can be set and the meaning of
-  these fields, use of custom metadata, and how to view currently set metadata.
+  While gsutil supports custom metadata with arbitrary Unicode values, note
+  that when setting metadata using the XML API, which sends metadata as HTTP
+  headers, Unicode characters are encoded using UTF-8, then url-encoded to
+  ASCII. For example:
+  
+    gsutil setmeta -h "x-goog-meta-foo: ã" gs://bucket/object
 
-  NOTE: By default, publicly readable objects are served with a Cache-Control
-  header allowing such objects to be cached for 3600 seconds. For more details
-  about this default behavior see the CACHE-CONTROL section of
-  "gsutil help metadata". If you need to ensure that updates become visible
-  immediately, you should set a Cache-Control header of "Cache-Control:private,
-  max-age=0, no-transform" on such objects.  You can do this with the command:
-
-    gsutil setmeta -h "Content-Type:text/html" \\
-      -h "Cache-Control:private, max-age=0, no-transform" gs://bucket/*.html
+  stores the custom metadata key-value pair of ``foo`` and ``%C3%A3``.
+  Subsequently, running ``ls -L`` using the JSON API to list the object's
+  metadata prints ``%C3%A3``, while ``ls -L`` using the XML API url-decodes
+  this value automatically, printing the character ``ã``.
 
   The setmeta command reads each object's current generation and metageneration
   and uses those as preconditions unless they are otherwise specified by
@@ -113,6 +113,9 @@ _DETAILED_HELP_TEXT = ("""
 
     gsutil -h "x-goog-if-metageneration-match:2" setmeta
       -h "x-goog-meta-icecreamflavor:vanilla"
+
+  See `Object metadata <https://cloud.google.com/storage/docs/metadata>`_ for
+  more information about object metadata.
 
 <B>OPTIONS</B>
   -h          Specifies a header:value to be added, or header to be removed,
@@ -126,6 +129,8 @@ SETTABLE_FIELDS = [
     'cache-control', 'content-disposition', 'content-encoding',
     'content-language', 'content-type', 'custom-time'
 ]
+
+_GCLOUD_OBJECTS_UPDATE_COMMAND = ['storage', 'objects', 'update']
 
 
 def _SetMetadataExceptionHandler(cls, e):
@@ -171,19 +176,38 @@ class SetMetaCommand(Command):
       subcommand_help_text={},
   )
 
+  gcloud_storage_map = GcloudStorageMap(
+      gcloud_command=_GCLOUD_OBJECTS_UPDATE_COMMAND,
+      flag_map={},
+  )
+
+  def get_gcloud_storage_args(self):
+    recursive_flag = []
+    for o, _ in self.sub_opts:
+      if o in ('-r', '-R'):
+        recursive_flag = ['--recursive']
+        break
+    clear_set, set_dict = self._ParseMetadataHeaders(
+        self._GetHeaderStringsFromSubOpts())
+    # Handle translation through "gcloud_command" instead of "flag_map".
+    self.sub_opts = []
+    clear_flags = self._translate_headers(
+        {clear_key: None for clear_key in clear_set}, unset=True)
+    set_flags = self._translate_headers(set_dict, unset=False)
+    command = (_GCLOUD_OBJECTS_UPDATE_COMMAND + recursive_flag + clear_flags +
+               set_flags)
+
+    gcloud_storage_map = GcloudStorageMap(
+        gcloud_command=command,
+        flag_map={},
+    )
+
+    return super().get_gcloud_storage_args(gcloud_storage_map)
+
   def RunCommand(self):
     """Command entry point for the setmeta command."""
-    headers = []
-    if self.sub_opts:
-      for o, a in self.sub_opts:
-        if o == '-h':
-          if 'x-goog-acl' in a or 'x-amz-acl' in a:
-            raise CommandException(
-                'gsutil setmeta no longer allows canned ACLs. Use gsutil acl '
-                'set ... to set canned ACLs.')
-          headers.append(a)
-
-    (metadata_minus, metadata_plus) = self._ParseMetadataHeaders(headers)
+    metadata_minus, metadata_plus = self._ParseMetadataHeaders(
+        self._GetHeaderStringsFromSubOpts())
 
     self.metadata_change = metadata_plus
     for header in metadata_minus:
@@ -292,6 +316,30 @@ class SetMetaCommand(Command):
                                    fields=['id'])
     _PutToQueueWithTimeout(gsutil_api.status_queue,
                            MetadataMessage(message_time=time.time()))
+
+  def _GetHeaderStringsFromSubOpts(self):
+    """Gets header values from after the "setmeta" part of the command.
+
+    Example: $ gsutil -h not:parsed setmeta is:parsed gs://bucket/object
+               -> ["is:parsed"]
+
+    Returns:
+      List[str]: Headers without the "-h" but not yet split on colons.
+
+    Raises:
+      CommandException Found canned ACL.
+    """
+    if not self.sub_opts:
+      return []
+    headers = []
+    for o, a in self.sub_opts:
+      if o == '-h':
+        if 'x-goog-acl' in a or 'x-amz-acl' in a:
+          raise CommandException(
+              'gsutil setmeta no longer allows canned ACLs. Use gsutil acl '
+              'set ... to set canned ACLs.')
+        headers.append(a)
+    return headers
 
   def _ParseMetadataHeaders(self, headers):
     """Validates and parses metadata changes from the headers argument.

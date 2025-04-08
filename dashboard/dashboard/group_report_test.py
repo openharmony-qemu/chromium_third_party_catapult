@@ -9,7 +9,7 @@ from __future__ import absolute_import
 from flask import Flask
 import itertools
 import json
-import mock
+from unittest import mock
 import unittest
 
 import six
@@ -239,6 +239,19 @@ class GroupReportTest(testing_common.TestCase):
     subscription = self._Subscription()
     test_keys = self._AddTests()
     self._AddAnomalyEntities([(200, 300), (100, 200), (400, 500)],
+                             test_keys[0], [subscription],
+                             group_id="123")
+    self._AddAnomalyEntities([(150, 250)], test_keys[0], [subscription])
+    response = self.testapp.post('/group_report?group_id=123')
+    alert_list = self.GetJsonValue(response, 'alert_list')
+    self.assertEqual(3, len(alert_list))
+
+  @mock.patch.object(perf_issue_service_client, 'GetAnomaliesByAlertGroupID',
+                     mock.MagicMock(return_value=[1, 2, 3, '1-2-3']))
+  def testPost_WithGroupIdParameterWithNonIntegerAnomalyId(self):
+    subscription = self._Subscription()
+    test_keys = self._AddTests()
+    self._AddAnomalyEntities([(200, 300), (100, 200), (400, 500), (600, 700)],
                              test_keys[0], [subscription],
                              group_id="123")
     self._AddAnomalyEntities([(150, 250)], test_keys[0], [subscription])

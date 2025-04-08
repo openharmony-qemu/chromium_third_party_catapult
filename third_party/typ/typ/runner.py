@@ -163,6 +163,7 @@ class Runner(object):
         self.metadata = {}
         self.path_delimiter = json_results.DEFAULT_TEST_SEPARATOR
         self.artifact_output_dir = None
+        self.tag_conflict_checker = None
 
         # initialize self.args to the defaults.
         parser = ArgumentParser(self.host)
@@ -446,7 +447,8 @@ class Runner(object):
 
         expectations = TestExpectations(set(args.tags), args.ignored_tags)
         err, msg = expectations.parse_tagged_list(
-            contents, args.expectations_files[0])
+            contents, args.expectations_files[0],
+            tags_conflict=self.tag_conflict_checker)
         if err:
             self.print_(msg, stream=self.host.stderr)
             return err
@@ -648,21 +650,42 @@ class Runner(object):
 
     def _run_one_set(self, stats, result_set, test_set, jobs, pool_group):
         self._skip_tests(stats, result_set, test_set.tests_to_skip)
-        pool = pool_group.make_parallel_pool()
-        try:
-            self._run_list(stats, result_set,
-                           test_set.parallel_tests, jobs, pool)
-            pool_group.close_parallel_pool()
-        finally:
-            self.final_responses.extend(pool_group.join_parallel_pool())
+        # Don't bother spinning up any pools if we don't have any use for them.
+        have_tests = test_set.parallel_tests or test_set.isolated_tests
+        if not have_tests:
+            return
 
-        pool = pool_group.make_serial_pool()
-        try:
-            self._run_list(stats, result_set,
-                           test_set.isolated_tests, 1, pool)
-            pool_group.close_serial_pool()
-        finally:
-            self.final_responses.extend(pool_group.join_serial_pool())
+        # If we know we are running all tests serially, reduce overhead a bit
+        # by only using one pool.
+        if jobs == 1:
+            pool = pool_group.make_serial_pool()
+            try:
+                self._run_list(stats, result_set, test_set.parallel_tests,
+                               jobs, pool)
+                self._run_list(stats, result_set, test_set.isolated_tests,
+                               jobs, pool)
+                pool_group.close_serial_pool()
+            finally:
+                self.final_responses.extend(pool_group.join_serial_pool())
+            return
+
+        if test_set.parallel_tests:
+            pool = pool_group.make_parallel_pool()
+            try:
+                self._run_list(stats, result_set,
+                               test_set.parallel_tests, jobs, pool)
+                pool_group.close_parallel_pool()
+            finally:
+                self.final_responses.extend(pool_group.join_parallel_pool())
+
+        if test_set.isolated_tests:
+            pool = pool_group.make_serial_pool()
+            try:
+                self._run_list(stats, result_set,
+                               test_set.isolated_tests, 1, pool)
+                pool_group.close_serial_pool()
+            finally:
+                self.final_responses.extend(pool_group.join_serial_pool())
 
     def _skip_tests(self, stats, result_set, tests_to_skip):
         for test_input in tests_to_skip:
@@ -746,11 +769,25 @@ class Runner(object):
         elif result.actual == ResultType.Failure:
             result_str += ' as expected'
 
+        # Include any associated bugs from relevant expectations if the test:
+        #   1. Was skipped
+        #   2. Failed as expected
+        #   3. Unexpectedly passed
+        bug_str = ''
+        expectedly_skipped_or_failed = (not result.unexpected and
+                                        result.actual != ResultType.Pass)
+        unexpectedly_passed = (result.unexpected and
+                               result.actual == ResultType.Pass)
+        if expectedly_skipped_or_failed or unexpectedly_passed:
+            if result.associated_bugs:
+                bug_str = f' ({result.associated_bugs})'
+
         if self.args.timing:
             timing_str = ' %.4fs' % result.took
         else:
             timing_str = ''
-        suffix = '%s%s' % (result_str, timing_str)
+        worker_str = ' (worker %d)' % result.worker
+        suffix = '%s%s%s%s' % (result_str, bug_str, timing_str, worker_str)
         out = result.out
         err = result.err
         if result.is_regression:
@@ -1053,6 +1090,18 @@ def _teardown_process(child):
 
 
 def _run_one_test(child, test_input):
+    def _get_expectation_information():
+        if child.has_expectations:
+            expectation = child.expectations.expectations_for(test_name)
+            expected_results = expectation.results
+            should_retry_on_failure = expectation.should_retry_on_failure
+            associated_bugs = expectation.reason
+        else:
+            expected_results = {ResultType.Pass}
+            should_retry_on_failure = False
+            associated_bugs = ''
+        return expected_results, should_retry_on_failure, associated_bugs
+
     h = child.host
     pid = h.getpid()
     test_name = test_input.name
@@ -1067,12 +1116,9 @@ def _run_one_test(child, test_input):
     # This comes up when using the FakeTestLoader and testing typ itself,
     # but could come up when testing non-typ code as well.
     h.capture_output(divert=not child.passthrough)
-    if child.has_expectations:
-        expectation = child.expectations.expectations_for(test_name)
-        expected_results, should_retry_on_failure = (
-            expectation.results, expectation.should_retry_on_failure)
-    else:
-        expected_results, should_retry_on_failure = {ResultType.Pass}, False
+    (expected_results,
+        should_retry_on_failure,
+        associated_bugs) = _get_expectation_information()
     ex_str = ''
     try:
         orig_skip = unittest.skip
@@ -1084,7 +1130,8 @@ def _run_one_test(child, test_input):
             h.restore_output()
             return (Result(test_name, ResultType.Skip, started, 0,
                            child.worker_num, expected=expected_results,
-                           unexpected=False, pid=pid), False)
+                           unexpected=False, pid=pid,
+                           associated_bugs=associated_bugs), False)
 
         test_name_to_load = child.test_name_prefix + test_name
         try:
@@ -1153,6 +1200,13 @@ def _run_one_test(child, test_input):
         if isinstance(test_case, TypTestCase):
             test_case.set_artifacts(None)
 
+    # We retrieve the expected results again since it's possible that running
+    # the test changed something, e.g. restarted the browser with new browser
+    # arguments, leading to different tags being generated.
+    (expected_results,
+        should_retry_on_failure,
+        associated_bugs) = _get_expectation_information()
+
     took = h.time() - started
     additional_tags = None
     test_location = inspect.getsourcefile(test_case.__class__)
@@ -1176,7 +1230,8 @@ def _run_one_test(child, test_input):
         if test_result.skipped and test_case.programmaticSkipIsExpected:
             result = Result(test_name, ResultType.Skip, started, took,
                            child.worker_num, expected={ResultType.Skip},
-                           unexpected=False, pid=pid)
+                           unexpected=False, pid=pid,
+                           associated_bugs=associated_bugs)
             result.result_sink_retcode =\
                     child.result_sink_reporter.report_individual_test_result(
                         result, child.artifact_output_dir, child.expectations,
@@ -1188,7 +1243,7 @@ def _run_one_test(child, test_input):
     result = _result_from_test_result(test_result, test_name, started, took, out,
                                     err, child.worker_num, pid, test_case,
                                     expected_results, child.has_expectations,
-                                    art.artifacts)
+                                    art.artifacts, associated_bugs)
     result.result_sink_retcode =\
             child.result_sink_reporter.report_individual_test_result(
                 result, child.artifact_output_dir, child.expectations,
@@ -1210,7 +1265,7 @@ def _run_under_debugger(host, test_case, suite,
 
 def _result_from_test_result(test_result, test_name, started, took, out, err,
                              worker_num, pid, test_case, expected_results,
-                             has_expectations, artifacts):
+                             has_expectations, artifacts, associated_bugs):
     failure_reason = None
     if test_result.failures:
         actual = ResultType.Failure
@@ -1258,7 +1313,8 @@ def _result_from_test_result(test_result, test_name, started, took, out, err,
     line_number = inspect.getsourcelines(test_func)[1]
     return Result(test_name, actual, started, took, worker_num,
                   expected_results, unexpected, flaky, code, out, err, pid,
-                  file_path, line_number, artifacts, failure_reason)
+                  file_path, line_number, artifacts, failure_reason,
+                  associated_bugs)
 
 
 def _failure_reason_from_traceback(traceback):

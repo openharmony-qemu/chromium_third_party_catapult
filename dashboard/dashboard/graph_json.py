@@ -23,6 +23,7 @@ from google.appengine.ext import ndb
 from dashboard import alerts
 from dashboard import can_bisect
 from dashboard import list_tests
+from dashboard.common import cloud_metric
 from dashboard.common import datastore_hooks
 from dashboard.common import request_handler
 from dashboard.common import utils
@@ -47,6 +48,7 @@ _BETTER_DICT = {
 }
 
 
+@cloud_metric.APIMetric("chromeperf", "/graph_json")
 def GraphJsonPost():
   graphs = request.values.get('graphs')
   arguments = _ParseRequestArguments(graphs)
@@ -400,6 +402,8 @@ def _GetFlotJson(revision_map, tests):
       }] for x, _ in enumerate(tests)
   }
 
+  start_time: datetime.datetime = None
+  end_time: datetime.datetime = None
   test_keys = [t.key.urlsafe() for t in tests]
   for revision in sorted(revision_map.keys()):
     for series_index, key in enumerate(test_keys):
@@ -409,6 +413,15 @@ def _GetFlotJson(revision_map, tests):
 
       timestamp = point_info.get('timestamp')
       if timestamp and isinstance(timestamp, datetime.datetime):
+        if not start_time:
+          start_time = timestamp
+        if not end_time:
+          end_time = timestamp
+
+        if timestamp < start_time:
+          start_time = timestamp
+        if timestamp > end_time:
+          end_time = timestamp
         point_info['timestamp'] = utils.TimestampMilliseconds(timestamp)
 
       # TODO(simonhatch): Need to filter out NaN values.
