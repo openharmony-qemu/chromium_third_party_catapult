@@ -3,15 +3,18 @@
 # found in the LICENSE file.
 
 from __future__ import absolute_import
+from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence
 import datetime
 from dateutil import parser
 from flask import Blueprint, request, make_response
+from typing import Any
 import logging
 import json
+import math
 import uuid
 
 from common import cloud_metric, utils
-from application.perf_api import datastore_client, auth_helper
+from application.perf_api import aggregation, datastore_client, auth_helper
 
 
 blueprint = Blueprint('anomalies', __name__)
@@ -74,6 +77,7 @@ class AnomalyData:
   bug_component: str
   bug_labels: list[str]
   bug_cc_emails: list[str]
+  bisect_ids: list[str]
 
   def __init__(
       self,
@@ -92,10 +96,27 @@ class AnomalyResponse:
 
   def ToDict(self):
     return {
-      "anomalies": {
-          test_name: self.anomalies[test_name] for test_name in self.anomalies
-      }
+        "anomalies": {
+            test_name: self.anomalies[test_name]
+            for test_name in self.anomalies
+        }
     }
+
+
+def convert_bracketing_test_in_anomaly(anomaly_data: AnomalyData,
+                                       bookkeeping: Mapping[str, str]):
+  """Converts anomaly_data internal test_path based on bookkeeping table.
+
+  Args:
+    anomaly_data: An AnomalyData that to change.
+    bookkeeping: A dictionary mapping bracketing test to its original test.
+  """
+  if not anomaly_data:
+    return
+  test_path = aggregation.convert_bracketing_test(anomaly_data.test_path,
+                                                  bookkeeping)
+  anomaly_data.test_path = test_path
+
 
 @blueprint.route('/find', methods=['POST'])
 @cloud_metric.APIMetric("skia-bridge", "/anomalies/find")
@@ -123,7 +144,13 @@ def QueryAnomaliesPostHandler():
       if not is_valid:
         return error, 400
 
-      batched_tests = list(CreateTestBatches(data['tests']))
+      test_candidates = []
+      for test in data.get('tests', []):
+        test_candidates.append(test)
+      if aggregation.is_aggregation_enabled(data):
+        bookkeeping = aggregation.add_bracketing_tests(test_candidates)
+
+      batched_tests = list(CreateTestBatches(test_candidates))
       logging.info('Created %i batches for DataStore query', len(batched_tests))
       anomalies = []
       for batch in batched_tests:
@@ -133,9 +160,14 @@ def QueryAnomaliesPostHandler():
           anomalies.extend(batch_anomalies)
 
     logging.info('%i anomalies returned from DataStore', len(anomalies))
+    if aggregation.is_aggregation_enabled(data):
+      logging.info('bookkeeper is %s', json.dumps(bookkeeping, indent=4))
+
     response = AnomalyResponse()
     for found_anomaly in anomalies:
       anomaly_data = GetAnomalyData(found_anomaly)
+      if aggregation.is_aggregation_enabled(data):
+        convert_bracketing_test_in_anomaly(anomaly_data, bookkeeping)
       response.AddAnomaly(anomaly_data.test_path, anomaly_data)
 
     return make_response(response.ToDict())
@@ -359,7 +391,7 @@ def CreateTestBatches(testList):
 def GetAnomalyData(anomaly_obj):
   bug_id = anomaly_obj.get('bug_id')
   # Mark empty bug id value as 0, instead of -1,
-  # so that SkiaPerf UI is less confusion between invalid bug id and empty bug id
+  # so that SkiaPerf UI is less confusion between invalid bug id and empty id
   if bug_id is None:
     bug_id = '0'
 
@@ -381,6 +413,9 @@ def GetAnomalyData(anomaly_obj):
     logging.warning('Anomaly %s has no subscription name.', anomaly_obj.id)
     subscription_names = ['']
 
+  t_stat = anomaly_obj.get('t_statistic')
+  if math.isinf(t_stat):
+    t_stat=0
   return AnomalyData(
       test_path=utils.TestPath(anomaly_obj.get('test')),
       start_revision=anomaly_obj.get('start_revision'),
@@ -400,11 +435,12 @@ def GetAnomalyData(anomaly_obj):
       segment_size_after=anomaly_obj.get('segment_size_after'),
       segment_size_before=anomaly_obj.get('segment_size_before'),
       std_dev_before_anomaly=anomaly_obj.get('std_dev_before_anomaly'),
-      t_statistic=anomaly_obj.get('t_statistic'),
+      t_statistic=t_stat,
       subscription_name=subscription_names[0],
       bug_component=bug_components[0],
       bug_labels=bug_labels,
-      bug_cc_emails=bug_cc_emails)
+      bug_cc_emails=bug_cc_emails,
+      bisect_ids=anomaly_obj.get('pinpoint_bisects'))
 
 def ValidateRequest(request_data, required_keys):
   missing_keys = []
