@@ -238,6 +238,7 @@ int main() {
 #if defined(WIN32)
   _setmode(_fileno(stdin), _O_BINARY);
   _setmode(_fileno(stdout), _O_BINARY);
+#elif defined(OSOHOS)
 #else
   stdin = freopen(NULL, "rb", stdin);
   stdout = freopen(NULL, "wb", stdout);
