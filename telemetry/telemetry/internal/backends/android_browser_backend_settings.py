@@ -305,8 +305,9 @@ class WebViewBackendSettings(WebViewBasedBackendSettings):
       if self.additional_apk_name is not None:
         additional_apk_path = os.path.join(
             os.path.dirname(apk_path), self.additional_apk_name)
-        if os.path.exists(additional_apk_path):
-          all_apks.append(additional_apk_path)
+        assert os.path.exists(additional_apk_path), (
+            f'{additional_apk_path} is missing for {apk_path}')
+        all_apks.append(additional_apk_path)
     return all_apks
 
   def IsWebView(self):
@@ -342,8 +343,9 @@ class WebViewBundleBackendSettings(WebViewBackendSettings):
       if self.additional_apk_name is not None:
         additional_apk_path = os.path.join(
             os.path.dirname(apk_path), '..', 'apks', self.additional_apk_name)
-        if os.path.exists(additional_apk_path):
-          all_apks.append(additional_apk_path)
+        assert os.path.exists(additional_apk_path), (
+            f'{additional_apk_path} is missing for {apk_path}')
+        all_apks.append(additional_apk_path)
     return all_apks
 
 
@@ -418,7 +420,7 @@ ANDROID_WEBVIEW_TRICHROME_GOOGLE = WebViewBackendSettings(
 
 ANDROID_WEBVIEW_TRICHROME_GOOGLE_BUNDLE = WebViewBundleBackendSettings(
     apk_name='trichrome_webview_google_bundle',
-    additional_apk_name='TrichromeLibraryGoogle6432.apk',
+    additional_apk_name='TrichromeLibraryGoogle.apk',
     browser_type='android-webview-trichrome-google-bundle')
 
 ANDROID_WEBVIEW_INSTRUMENTATION = WebViewBasedBackendSettings(
@@ -509,11 +511,27 @@ ANDROID_CHROME_BUNDLE = GenericChromeBundleBackendSettings(
     package='com.google.android.apps.chrome',
     apk_name='monochrome_bundle')
 
-ANDROID_TRICHROME_BUNDLE = GenericChromeBundleBackendSettings(
-    browser_type='android-trichrome-bundle',
+ANDROID_TRICHROME_CHROME_BUNDLE = GenericChromeBundleBackendSettings(
+    browser_type='android-trichrome-chrome-bundle',
+    package='org.chromium.chrome',
+    apk_name='trichrome_chrome_bundle',
+    additional_apk_name='TrichromeLibrary.apk')
+
+ANDROID_TRICHROME_CHROME_GOOGLE_BUNDLE = GenericChromeBundleBackendSettings(
+    browser_type='android-trichrome-chrome-google-bundle',
     package='com.google.android.apps.chrome',
     apk_name='trichrome_chrome_google_bundle',
     additional_apk_name='TrichromeLibraryGoogle.apk')
+
+# Prefer the _64_32 target instead of the _64 target, since telemetry is already
+# set up for it (e.g. //tools/perf/chrome_telemetry_build/BUILD.gn). The only
+# difference for these trichrome_chrome_* targets between _64_32 and _64 is an
+# empty stub lib in the library apk.
+ANDROID_TRICHROME_CHROME_64_32_BUNDLE = GenericChromeBundleBackendSettings(
+    browser_type='android-trichrome-chrome-64-32-bundle',
+    package='org.chromium.chrome',
+    apk_name='trichrome_chrome_64_32_bundle',
+    additional_apk_name='TrichromeLibrary6432.apk')
 
 ANDROID_TRICHROME_CHROME_GOOGLE_64_32_BUNDLE = (
     GenericChromeBundleBackendSettings(
@@ -575,10 +593,12 @@ ANDROID_BACKEND_SETTINGS = (
     ANDROID_CHROME,
     ANDROID_CHROME_64_BUNDLE,
     ANDROID_CHROME_BUNDLE,
-    ANDROID_TRICHROME_BUNDLE,
+    ANDROID_TRICHROME_CHROME_BUNDLE,
+    ANDROID_TRICHROME_CHROME_GOOGLE_BUNDLE,
+    ANDROID_TRICHROME_CHROME_64_32_BUNDLE,
     ANDROID_TRICHROME_CHROME_GOOGLE_64_32_BUNDLE,
     ANDROID_CHROME_BETA,
     ANDROID_CHROME_DEV,
     ANDROID_CHROME_CANARY,
-    ANDROID_SYSTEM_CHROME
+    ANDROID_SYSTEM_CHROME,
 )

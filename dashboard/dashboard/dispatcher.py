@@ -46,6 +46,7 @@ from dashboard import report
 from dashboard import sheriff_config_poller
 from dashboard import short_uri
 from dashboard import update_dashboard_stats
+from dashboard import update_pinpoint_job_culprits
 from dashboard import update_test_suites
 from dashboard import update_test_suite_descriptors
 from dashboard import uploads_info
@@ -116,6 +117,36 @@ def SkiaAlertsHandlerGet():
   return alerts.SkiaAlertsHandlerGet()
 
 
+@flask_app.route('/alerts_skia_by_key', methods=['GET'])
+def SkiaAlertsByKeyHandlerGet():
+  return group_report.SkiaGetAlertsByIntegerKey()
+
+
+@flask_app.route('/alerts_skia_by_keys', methods=['POST'])
+def SkiaAlertsByKeysHandlerPost():
+  return group_report.SkiaPostAlertsByIntegerKeys()
+
+
+@flask_app.route('/alerts_skia_by_bug_id', methods=['GET'])
+def SkiaAlertsByBugIdHandlerGet():
+  return group_report.SkiaGetAlertsByBugId()
+
+
+@flask_app.route('/alerts_skia_by_sid', methods=['GET'])
+def SkiaAlertsBySidHandlerGet():
+  return group_report.SkiaGetAlertsBySid()
+
+
+@flask_app.route('/alerts/skia/rev/<rev>', methods=['GET'])
+def ListSkiaAlertsByRev(rev):
+  return group_report.ListSkiaAlertsByRev(rev)
+
+
+@flask_app.route('/alerts/skia/group_id/<group_id>', methods=['GET'])
+def ListSkiaAlertsByGroupId(group_id):
+  return group_report.ListSkiaAlertsByGroupId(group_id)
+
+
 @flask_app.route('/associate_alerts', methods=['GET', 'POST'])
 def AssociateAlertsHandlerPost():
   return associate_alerts.AssociateAlertsHandlerPost()
@@ -174,6 +205,20 @@ def EditAnomaliesPost():
 @flask_app.route('/edit_anomalies_skia', methods=['POST'])
 def SkiaEditAnomaliesPost():
   return edit_anomalies.SkiaEditAnomaliesPost()
+
+
+@flask_app.route('/update_pinpoint_job_culprits', methods=['GET', 'POST'])
+# Added page_size and look_back for debugging purposes so that we can update
+# the url in cron.yaml to update cron job behavior.
+@flask_app.route(
+    '/update_pinpoint_job_culprits/<page_size>', methods=['GET', 'POST'])
+@flask_app.route(
+    '/update_pinpoint_job_culprits/<page_size>/<look_back>',
+    methods=['GET', 'POST'])
+def UpdatePinpointJobCulprits(page_size=None, look_back=None):
+  logging.debug('[CULPRITS] Recieved request')
+  return update_pinpoint_job_culprits.UpdatePinpointJobCulpritsPost(
+      page_size, look_back)
 
 
 @flask_app.route('/edit_site_config', methods=['GET'])
